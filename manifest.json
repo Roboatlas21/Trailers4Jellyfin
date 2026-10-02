@@ -9,6 +9,14 @@
         "imageUrl": "https://raw.githubusercontent.com/Roboatlas21/Trailers4Jellyfin/main/Jellyfin.Plugin.Trailers4Jellyfin/Images/logo.svg",
         "versions": [
             {
+                "checksum": "5c155bfcb4f4ee4fe54ef3eec2db3007",
+                "changelog": "- Add independent Prefer unwatched checkboxes for trailer pre-rolls, trailers, feature pre-rolls, and episode commercials.\n- Use the current Jellyfin user's watched history, with watched clips available when needed. Preferences default to off.\n- Prioritize unwatched trailers before genre matching while preserving parental-rating filtering and episode frequency limits.\n",
+                "targetAbi": "12.1.0.0",
+                "sourceUrl": "https://github.com/Roboatlas21/Trailers4Jellyfin/releases/download/v2.0.18.2/trailers4jellyfin_2.0.18.2.zip",
+                "timestamp": "2026-10-02T17:27:57Z",
+                "version": "2.0.18.2"
+            },
+            {
                 "checksum": "42b7bb59176e3239db589c4db5bb3822",
                 "changelog": "- Add Browse buttons using Jellyfin's server folder picker for trailer downloads and all pre-roll folders.\n- Keep manual path entry and existing settings; folder selections are applied when Save is pressed.\n",
                 "targetAbi": "12.1.0.0",
