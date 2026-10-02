@@ -9,7 +9,7 @@ description: >
 overview: Cinema-style trailers for movies you haven't seen yet
 category: General
 owner: robadieNZ
-targetAbi: 10.11.0.0
+targetAbi: 12.1.0.0
 changelog:
   - Fix: yt-dlp downloads no longer hang indefinitely partway through — stdout/stderr from the yt-dlp process weren't being drained concurrently, so its progress output could fill the OS pipe buffer and deadlock the download for large or slow trailers
   - Fix: leftover partial downloads (".f137.mp4", ".temp.mp4", ".part") are now cleaned up and no longer counted as trailers — previously they filled the retention cap and could be played as silent video-only intros

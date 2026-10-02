@@ -11,7 +11,6 @@ using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Entities;
-using Jellyfin.Database.Implementations.Entities;
 using MediaBrowser.Model.Tasks;
 using Microsoft.Extensions.Logging;
 
@@ -285,23 +284,6 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
             return ids;
         }
 
-        // GetUsers() replaced the Users property in Jellyfin 10.11.10. Try both via reflection
-        // so the plugin works across patch versions without recompiling.
-        private IList<User> GetAllUsers()
-        {
-            var type = _userManager.GetType();
-
-            var method = type.GetMethod("GetUsers", Type.EmptyTypes);
-            if (method != null)
-                return ((IEnumerable<User>)method.Invoke(_userManager, null)!).ToList();
-
-            var prop = type.GetProperty("Users");
-            if (prop != null)
-                return ((IEnumerable<User>)prop.GetValue(_userManager)!).ToList();
-
-            throw new MissingMethodException("Neither GetUsers() nor Users found on IUserManager.");
-        }
-
         private void CleanupTrailers(
             Configuration.PluginConfiguration config,
             IReadOnlyList<Video> registeredTrailers)
@@ -335,26 +317,18 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
             // Delete watched trailers first.
             if (config.DeleteWatchedTrailers)
             {
-                try
+                var users = _userManager.GetUsers().ToList();
+                foreach (var file in files.ToList())
                 {
-                    // Users property was replaced with GetUsers() in Jellyfin 10.11.10+.
-                    var users = GetAllUsers();
-                    foreach (var file in files.ToList())
-                    {
-                        if (!trailerItemsByPath.TryGetValue(Path.GetFullPath(file), out var item)) continue;
-                        bool watched = users.Any(u => _userDataManager.GetUserData(u, item)?.Played == true);
-                        if (!watched) continue;
+                    if (!trailerItemsByPath.TryGetValue(Path.GetFullPath(file), out var item)) continue;
+                    bool watched = users.Any(u => _userDataManager.GetUserData(u, item)?.Played == true);
+                    if (!watched) continue;
 
-                        _logger.LogInformation("|Trailers4Jellyfin| Deleting watched trailer: {File}", Path.GetFileName(file));
-                        File.Delete(file);
-                        var sidecar = Path.ChangeExtension(file, ".json");
-                        if (File.Exists(sidecar)) File.Delete(sidecar);
-                        files.Remove(file);
-                    }
-                }
-                catch (MissingMethodException ex)
-                {
-                    _logger.LogWarning(ex, "|Trailers4Jellyfin| Cannot enumerate users in this Jellyfin version — DeleteWatchedTrailers skipped.");
+                    _logger.LogInformation("|Trailers4Jellyfin| Deleting watched trailer: {File}", Path.GetFileName(file));
+                    File.Delete(file);
+                    var sidecar = Path.ChangeExtension(file, ".json");
+                    if (File.Exists(sidecar)) File.Delete(sidecar);
+                    files.Remove(file);
                 }
             }
 

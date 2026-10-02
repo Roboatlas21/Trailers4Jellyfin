@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>Jellyfin.Plugin.Trailers4Jellyfin</RootNamespace>
     <AssemblyVersion>1.0.18.0</AssemblyVersion>
     <FileVersion>1.0.18.0</FileVersion>
@@ -11,8 +11,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Jellyfin.Controller" Version="10.11.0" />
-    <PackageReference Include="Jellyfin.Model" Version="10.11.0" />
+    <PackageReference Include="Jellyfin.Controller" Version="12.1.0" />
+    <PackageReference Include="Jellyfin.Model" Version="12.1.0" />
     <PackageReference Include="YoutubeExplode" Version="6.*" />
   </ItemGroup>
 
