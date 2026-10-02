@@ -1,5 +1,5 @@
 ---
-version: 2.0.18.0
+version: 2.0.18.1
 name: Trailers4Jellyfin
 guid: 7635bf62-6b22-4c4c-9bc7-5d55f0c2bff0
 description: >
@@ -11,13 +11,8 @@ category: General
 owner: Roboatlas21
 targetAbi: 12.1.0.0
 changelog:
-  - "Requires Jellyfin 12.1 and .NET 10."
-  - "Register trailers and pre-rolls privately without visible Jellyfin libraries."
-  - "Add optional trailer and feature pre-roll folders for movies."
-  - "Add per-user episode commercials with configurable chance, cooldown, spacing, and rolling limits; default chance is 75%."
-  - "Preserve genre and parental-rating filtering, and skip malformed trailer metadata safely."
-  - "Publish downloaded trailers only after video and metadata are complete."
-  - "Fix case-sensitive asset paths on Linux and preserve existing plugin settings and external yt-dlp wrappers."
+  - "Add Browse buttons using Jellyfin's server folder picker for trailer downloads and all pre-roll folders."
+  - "Keep manual path entry and existing settings; folder selections are applied when Save is pressed."
 
 dotnetProjects:
   - name: Jellyfin.Plugin.Trailers4Jellyfin

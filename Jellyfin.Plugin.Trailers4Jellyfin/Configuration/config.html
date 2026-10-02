@@ -64,7 +64,10 @@
 
                         <div class="inputContainer">
                             <label class="inputLabel inputLabelUnfocused" for="trailer-preroll-folder">Trailer Pre-Roll Folder</label>
-                            <input type="text" id="trailer-preroll-folder" is="emby-input" placeholder="/media/trailer-prerolls" />
+                            <div class="flex align-items-center">
+                                <input type="text" id="trailer-preroll-folder" is="emby-input" placeholder="/media/trailer-prerolls" style="flex:1;min-width:0" />
+                                <button is="emby-button" type="button" class="raised" data-folder-input="trailer-preroll-folder" aria-label="Browse for trailer pre-roll folder" style="flex-shrink:0;margin-inline-start:.5em">Browse</button>
+                            </div>
                             <div class="fieldDescription">
                                 Optional folder of bumpers to play before the trailer block. One video is chosen at random.
                             </div>
@@ -92,7 +95,10 @@
 
                         <div class="inputContainer">
                             <label class="inputLabel inputLabelUnfocused" for="feature-preroll-folder">Feature Pre-Roll Folder</label>
-                            <input type="text" id="feature-preroll-folder" is="emby-input" placeholder="/media/feature-prerolls" />
+                            <div class="flex align-items-center">
+                                <input type="text" id="feature-preroll-folder" is="emby-input" placeholder="/media/feature-prerolls" style="flex:1;min-width:0" />
+                                <button is="emby-button" type="button" class="raised" data-folder-input="feature-preroll-folder" aria-label="Browse for feature pre-roll folder" style="flex-shrink:0;margin-inline-start:.5em">Browse</button>
+                            </div>
                             <div class="fieldDescription">
                                 Optional folder of bumpers to play after the trailers and immediately before the movie.
                                 One video is chosen at random.
@@ -101,7 +107,10 @@
 
                         <div class="inputContainer">
                             <label class="inputLabel inputLabelUnfocused" for="episode-preroll-folder">Episode Pre-Roll Folder</label>
-                            <input type="text" id="episode-preroll-folder" is="emby-input" placeholder="/media/episode-prerolls" />
+                            <div class="flex align-items-center">
+                                <input type="text" id="episode-preroll-folder" is="emby-input" placeholder="/media/episode-prerolls" style="flex:1;min-width:0" />
+                                <button is="emby-button" type="button" class="raised" data-folder-input="episode-preroll-folder" aria-label="Browse for episode pre-roll folder" style="flex-shrink:0;margin-inline-start:.5em">Browse</button>
+                            </div>
                             <div class="fieldDescription">
                                 Optional folder of commercials or bumpers for TV episodes. Leave blank to disable.
                                 The limits below apply per user. Episodes with a saved resume position are skipped.
@@ -243,7 +252,10 @@
 
                         <div class="inputContainer">
                             <label class="inputLabel inputLabelUnfocused" for="download-folder">Download Folder</label>
-                            <input type="text" id="download-folder" is="emby-input" placeholder="/media/trailers" />
+                            <div class="flex align-items-center">
+                                <input type="text" id="download-folder" is="emby-input" placeholder="/media/trailers" style="flex:1;min-width:0" />
+                                <button is="emby-button" type="button" class="raised" data-folder-input="download-folder" aria-label="Browse for trailer download folder" style="flex-shrink:0;margin-inline-start:.5em">Browse</button>
+                            </div>
                             <div class="fieldDescription">
                                 Where downloaded trailers are saved. Trailers4Jellyfin registers these files internally;
                                 do not add this folder as a Jellyfin library.
@@ -380,6 +392,22 @@
                 var value = parseInt(input.value, 10);
                 return Number.isNaN(value) ? fallback : Math.max(Number(input.min), Math.min(Number(input.max), value));
             }
+
+            $('.trailers4JellyfinConfigPage button[data-folder-input]').on('click', function () {
+                var input = document.getElementById(this.getAttribute('data-folder-input'));
+                var picker = new Dashboard.DirectoryBrowser();
+                picker.show({
+                    header: input.labels[0].textContent,
+                    path: input.value.trim(),
+                    includeFiles: false,
+                    validateWriteable: input.id === 'download-folder',
+                    callback: function (path) {
+                        input.value = path;
+                        input.dispatchEvent(new Event('change', { bubbles: true }));
+                        picker.close();
+                    }
+                });
+            });
 
             $('.trailers4JellyfinConfigPage').on('pageshow', function () {
                 Dashboard.showLoadingMsg();

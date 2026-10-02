@@ -77,6 +77,8 @@ Copy the built plugin files into the Jellyfin plugin directory and restart Jelly
 
 Go to **Admin → Plugins → Trailers4Jellyfin**.
 
+Use **Browse** beside any folder field to select a folder on the Jellyfin server, then press **Save**. In Docker, the picker shows paths inside the Jellyfin container; the host media folders must be mapped into it. Manual path entry is also supported.
+
 ### Cinema Mode
 
 | Setting | Description |
