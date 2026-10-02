@@ -1,5 +1,5 @@
 ---
-version: 2.0.18.1
+version: 2.0.18.2
 name: Trailers4Jellyfin
 guid: 7635bf62-6b22-4c4c-9bc7-5d55f0c2bff0
 description: >
@@ -11,8 +11,9 @@ category: General
 owner: Roboatlas21
 targetAbi: 12.1.0.0
 changelog:
-  - "Add Browse buttons using Jellyfin's server folder picker for trailer downloads and all pre-roll folders."
-  - "Keep manual path entry and existing settings; folder selections are applied when Save is pressed."
+  - "Add independent Prefer unwatched checkboxes for trailer pre-rolls, trailers, feature pre-rolls, and episode commercials."
+  - "Use the current Jellyfin user's watched history, with watched clips available when needed. Preferences default to off."
+  - "Prioritize unwatched trailers before genre matching while preserving parental-rating filtering and episode frequency limits."
 
 dotnetProjects:
   - name: Jellyfin.Plugin.Trailers4Jellyfin

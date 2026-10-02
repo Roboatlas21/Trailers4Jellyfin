@@ -36,10 +36,14 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Configuration
 
         public bool EnableCinemaMode { get; set; } = true;
         public string TrailerPreRollFolder { get; set; } = string.Empty;
+        public bool PreferUnwatchedTrailerPreRolls { get; set; } = false;
         public int NumberOfTrailers { get; set; } = 2;
+        public bool PreferUnwatchedTrailers { get; set; } = false;
         public bool EnableGenreMatching { get; set; } = true;
         public string FeaturePreRollFolder { get; set; } = string.Empty;
+        public bool PreferUnwatchedFeaturePreRolls { get; set; } = false;
         public string EpisodePreRollFolder { get; set; } = string.Empty;
+        public bool PreferUnwatchedEpisodePreRolls { get; set; } = false;
         public int EpisodePreRollChancePercent { get; set; } = 75;
         public int EpisodePreRollCooldownMinutes { get; set; } = 60;
         public int EpisodePreRollMinEpisodes { get; set; } = 3;

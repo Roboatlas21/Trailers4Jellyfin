@@ -89,6 +89,10 @@ Use **Browse** beside any folder field to select a folder on the Jellyfin server
 | **Match trailers to movie genre** | Prefers trailers whose stored TMDB genres match the feature |
 | **Feature Pre-Roll Folder** | Optional folder; one random video plays after trailers and before the movie |
 
+Each clip type has its own **Prefer unwatched** checkbox: trailer pre-rolls, trailers, feature pre-rolls, and episode pre-rolls. All four default to off. When enabled, the plugin prefers clips Jellyfin has not marked watched for the current user's ID; each user's history is independent, and no visible media library is required.
+
+Pre-rolls are chosen randomly from the unwatched clips, falling back to the full pool once all are watched. Trailers prioritize unwatched status before genre matching and can use watched trailers to fill the requested count. Parental-rating filtering and episode frequency limits still apply. Selection does not mark a clip watched or reset watched history; Jellyfin's playback tracking determines that status.
+
 Example:
 
 ```text

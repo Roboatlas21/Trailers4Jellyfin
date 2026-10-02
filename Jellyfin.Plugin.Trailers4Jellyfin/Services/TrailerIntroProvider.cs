@@ -42,7 +42,7 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
                 if (item is Episode episode)
                     return await GetEpisodeIntrosAsync(episode, user).ConfigureAwait(false);
 
-                return await GetIntrosInternal(item).ConfigureAwait(false);
+                return await GetIntrosInternal(item, user).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -64,7 +64,8 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
             if (isResume)
                 return Enumerable.Empty<IntroInfo>();
 
-            var episodePreRolls = _assetRegistry.SyncEpisodePreRolls(config.EpisodePreRollFolder);
+            var episodePreRolls = GetPreferredClips(
+                _assetRegistry.SyncEpisodePreRolls(config.EpisodePreRollFolder), user, config.PreferUnwatchedEpisodePreRolls);
             if (episodePreRolls.Count == 0)
                 return Enumerable.Empty<IntroInfo>();
 
@@ -91,7 +92,7 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
             return new[] { ToIntroInfo(selected) };
         }
 
-        private Task<IEnumerable<IntroInfo>> GetIntrosInternal(BaseItem item)
+        private Task<IEnumerable<IntroInfo>> GetIntrosInternal(BaseItem item, User user)
         {
             var config = Plugin.Instance?.Configuration;
             if (config == null || !config.EnableCinemaMode)
@@ -106,13 +107,13 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
 
             // Match CherryFloors Cinema Mode's ordering:
             // trailer pre-roll -> trailers -> feature pre-roll -> main feature.
-            AddRandom(intros, assets.TrailerPreRolls);
+            AddRandom(intros, GetPreferredClips(assets.TrailerPreRolls, user, config.PreferUnwatchedTrailerPreRolls));
 
             var trailerItems = assets.DownloadedTrailers.ToList();
-            var selected = SelectTrailers(item, trailerItems, config);
+            var selected = SelectTrailers(item, trailerItems, config, user);
             intros.AddRange(selected.Select(ToIntroInfo));
 
-            AddRandom(intros, assets.FeaturePreRolls);
+            AddRandom(intros, GetPreferredClips(assets.FeaturePreRolls, user, config.PreferUnwatchedFeaturePreRolls));
 
             _logger.LogInformation(
                 "|Trailers4Jellyfin| Queuing {Count} Cinema Mode item(s) before '{Movie}' " +
@@ -129,7 +130,8 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
         internal List<Video> SelectTrailers(
             BaseItem feature,
             IReadOnlyList<Video> trailerItems,
-            Configuration.PluginConfiguration config)
+            Configuration.PluginConfiguration config,
+            User user)
         {
             if (config.NumberOfTrailers <= 0 || trailerItems.Count == 0)
                 return new List<Video>();
@@ -140,6 +142,7 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
             var movieGenres = new HashSet<string>(
                 config.EnableGenreMatching ? feature.Genres ?? Array.Empty<string>() : Array.Empty<string>(),
                 StringComparer.OrdinalIgnoreCase);
+            var watchedIds = GetWatchedIds(trailerItems, user, config.PreferUnwatchedTrailers);
 
             // Read each sidecar once. An invalid sidecar only excludes that trailer.
             // Missing/unknown ratings retain the existing permissive behavior.
@@ -150,11 +153,34 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
                         || string.IsNullOrWhiteSpace(x.metadata.OfficialRating)
                         || !RatingSeverity.TryGetValue(x.metadata.OfficialRating, out var trailerSeverity)
                         || trailerSeverity <= movieSeverity.Value))
-                .OrderByDescending(x => x.metadata!.Genres?.Count(movieGenres.Contains) ?? 0)
+                .OrderBy(x => watchedIds.Contains(x.trailer.Id))
+                .ThenByDescending(x => x.metadata!.Genres?.Count(movieGenres.Contains) ?? 0)
                 .ThenBy(_ => Random.Shared.Next())
                 .Take(config.NumberOfTrailers)
                 .Select(x => x.trailer)
                 .ToList();
+        }
+
+        internal IReadOnlyList<Video> GetPreferredClips(IReadOnlyList<Video> items, User user, bool preferUnwatched)
+        {
+            var watchedIds = GetWatchedIds(items, user, preferUnwatched);
+            if (watchedIds.Count == 0)
+                return items;
+
+            var unwatched = items.Where(item => !watchedIds.Contains(item.Id)).ToList();
+            return unwatched.Count > 0 ? unwatched : items;
+        }
+
+        private HashSet<Guid> GetWatchedIds(IReadOnlyList<Video> items, User user, bool preferUnwatched)
+        {
+            if (!preferUnwatched || items.Count == 0)
+                return new HashSet<Guid>();
+
+            // Private items may not have user data loaded. Batch lookup also reads stored history.
+            return _userDataManager.GetUserDataBatch(items, user)
+                .Where(entry => entry.Value.Played)
+                .Select(entry => entry.Key)
+                .ToHashSet();
         }
 
         private static readonly Dictionary<string, int> RatingSeverity =

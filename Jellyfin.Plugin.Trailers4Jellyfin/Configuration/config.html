@@ -51,6 +51,11 @@
                             Leave either pre-roll folder blank to skip that stage. Users still need Cinema Mode
                             enabled in their client playback settings.
                         </p>
+                        <p class="fieldDescription">
+                            Each <strong>Prefer unwatched</strong> option uses the current Jellyfin user's watched status.
+                            Watched clips remain available when no unwatched clips remain, or to fill the requested trailer count.
+                            For trailers, unwatched status takes priority over genre matching; parental-rating filtering still applies.
+                        </p>
 
                         <div class="checkboxContainer checkboxContainer-withDescription">
                             <label>
@@ -73,12 +78,26 @@
                             </div>
                         </div>
 
+                        <div class="checkboxContainer">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="prefer-unwatched-trailer-prerolls" />
+                                <span>Prefer unwatched trailer pre-rolls</span>
+                            </label>
+                        </div>
+
                         <div class="inputContainer">
                             <label class="inputLabel inputLabelUnfocused" for="num-trailers">Trailers per movie</label>
                             <input type="number" id="num-trailers" is="emby-input" min="0" max="10" />
                             <div class="fieldDescription">
                                 How many downloaded trailers to play. Set to 0 to disable the trailer block. Default: 2.
                             </div>
+                        </div>
+
+                        <div class="checkboxContainer">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="prefer-unwatched-trailers" />
+                                <span>Prefer unwatched trailers</span>
+                            </label>
                         </div>
 
                         <div class="checkboxContainer checkboxContainer-withDescription">
@@ -105,6 +124,13 @@
                             </div>
                         </div>
 
+                        <div class="checkboxContainer">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="prefer-unwatched-feature-prerolls" />
+                                <span>Prefer unwatched feature pre-rolls</span>
+                            </label>
+                        </div>
+
                         <div class="inputContainer">
                             <label class="inputLabel inputLabelUnfocused" for="episode-preroll-folder">Episode Pre-Roll Folder</label>
                             <div class="flex align-items-center">
@@ -115,6 +141,13 @@
                                 Optional folder of commercials or bumpers for TV episodes. Leave blank to disable.
                                 The limits below apply per user. Episodes with a saved resume position are skipped.
                             </div>
+                        </div>
+
+                        <div class="checkboxContainer">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="prefer-unwatched-episode-prerolls" />
+                                <span>Prefer unwatched episode pre-rolls</span>
+                            </label>
                         </div>
 
                         <div class="inputContainer">
@@ -414,6 +447,10 @@
                 ApiClient.getPluginConfiguration(pluginId).then(function (config) {
                     document.getElementById('tmdb-api-key').value           = config.TmdbApiKey || '';
                     document.getElementById('enable-cinema-mode').checked   = config.EnableCinemaMode !== false;
+                    document.getElementById('prefer-unwatched-trailer-prerolls').checked = !!config.PreferUnwatchedTrailerPreRolls;
+                    document.getElementById('prefer-unwatched-trailers').checked = !!config.PreferUnwatchedTrailers;
+                    document.getElementById('prefer-unwatched-feature-prerolls').checked = !!config.PreferUnwatchedFeaturePreRolls;
+                    document.getElementById('prefer-unwatched-episode-prerolls').checked = !!config.PreferUnwatchedEpisodePreRolls;
                     document.getElementById('trailer-preroll-folder').value  = config.TrailerPreRollFolder || '';
                     document.getElementById('num-trailers').value           = config.NumberOfTrailers ?? 2;
                     document.getElementById('enable-genre-matching').checked = config.EnableGenreMatching !== false;
@@ -454,6 +491,10 @@
                 ApiClient.getPluginConfiguration(pluginId).then(function (config) {
                     config.TmdbApiKey             = document.getElementById('tmdb-api-key').value;
                     config.EnableCinemaMode       = document.getElementById('enable-cinema-mode').checked;
+                    config.PreferUnwatchedTrailerPreRolls = document.getElementById('prefer-unwatched-trailer-prerolls').checked;
+                    config.PreferUnwatchedTrailers = document.getElementById('prefer-unwatched-trailers').checked;
+                    config.PreferUnwatchedFeaturePreRolls = document.getElementById('prefer-unwatched-feature-prerolls').checked;
+                    config.PreferUnwatchedEpisodePreRolls = document.getElementById('prefer-unwatched-episode-prerolls').checked;
                     config.TrailerPreRollFolder   = document.getElementById('trailer-preroll-folder').value;
                     var numTrailers               = parseInt(document.getElementById('num-trailers').value, 10);
                     config.NumberOfTrailers       = Number.isNaN(numTrailers) ? 2 : Math.max(0, numTrailers);
