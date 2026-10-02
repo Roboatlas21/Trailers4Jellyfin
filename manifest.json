@@ -3,11 +3,19 @@
         "category": "General",
         "guid": "7635bf62-6b22-4c4c-9bc7-5d55f0c2bff0",
         "name": "Trailers4Jellyfin",
-        "description": "Automatically downloads trailers for upcoming and recently released movies not in your library, from TMDB/YouTube. Pairs with Cinema Mode for a real cinema experience.",
+        "description": "Automatically downloads trailers for upcoming and recently released movies not in your library, from TMDB/YouTube. Pairs with Cinema Mode to create a real cinema experience \u2014 random trailers before your movies start.\n",
         "overview": "Cinema-style trailers for movies you haven't seen yet",
-        "owner": "robadieNZ",
-        "imageUrl": "https://raw.githubusercontent.com/robadieNZ/Trailers4Jellyfin/main/Jellyfin.Plugin.Trailers4Jellyfin/Images/logo.svg",
+        "owner": "Roboatlas21",
+        "imageUrl": "https://raw.githubusercontent.com/Roboatlas21/Trailers4Jellyfin/main/Jellyfin.Plugin.Trailers4Jellyfin/Images/logo.svg",
         "versions": [
+            {
+                "checksum": "f6b33206dc29a9c62f101be65d3a1d69",
+                "changelog": "- Requires Jellyfin 12.1 and .NET 10.\n- Register trailers and pre-rolls privately without visible Jellyfin libraries.\n- Add optional trailer and feature pre-roll folders for movies.\n- Add per-user episode commercials with configurable chance, cooldown, spacing, and rolling limits; default chance is 75%.\n- Preserve genre and parental-rating filtering, and skip malformed trailer metadata safely.\n- Publish downloaded trailers only after video and metadata are complete.\n- Fix case-sensitive asset paths on Linux and preserve existing plugin settings and external yt-dlp wrappers.\n",
+                "targetAbi": "12.1.0.0",
+                "sourceUrl": "https://github.com/Roboatlas21/Trailers4Jellyfin/releases/download/v2.0.18.0/trailers4jellyfin_2.0.18.0.zip",
+                "timestamp": "2026-10-02T15:29:37Z",
+                "version": "2.0.18.0"
+            },
             {
                 "checksum": "ddc852b1ae32c892e5a25e3750eaa505",
                 "changelog": "- {'Fix': \"yt-dlp downloads no longer hang indefinitely partway through \u2014 stdout/stderr from the yt-dlp process weren't being drained concurrently, so its progress output could fill the OS pipe buffer and deadlock the download for large or slow trailers\"}\n- {'Fix': 'leftover partial downloads (\".f137.mp4\", \".temp.mp4\", \".part\") are now cleaned up and no longer counted as trailers \u2014 previously they filled the retention cap and could be played as silent video-only intros'}\n- {'Fix': 'cancelling the download task now stops yt-dlp instead of leaving an orphaned process downloading in the background'}\n- {'Fix': 'movie titles containing quotes or percent signs are passed to yt-dlp safely \u2014 arguments are no longer assembled into a single shell-style string'}\n- {'Security': 'a crafted TMDB movie title could previously inject extra yt-dlp flags (including --exec) through the unquoted argument string'}\n- {'Fix': 'yt-dlp is now auto-detected from PATH and common install locations \u2014 no manual path configuration needed in most cases'}\n- {'Fix': 'disabling the Trailers library no longer breaks movie playback \u2014 intro provider exceptions are caught and return empty intros safely'}\n- {'Add': 'ffmpeg path setting so yt-dlp can merge audio/video when ffmpeg is not on the system PATH'}\n",
