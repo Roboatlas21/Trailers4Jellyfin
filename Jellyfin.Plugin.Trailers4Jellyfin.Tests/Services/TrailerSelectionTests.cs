@@ -26,7 +26,7 @@ public sealed class TrailerSelectionTests : IDisposable
         Directory.CreateDirectory(_directory);
         var manager = DispatchProxy.Create<IUserDataManager, UserDataProxy>();
         _history = (UserDataProxy)(object)manager;
-        _provider = new(null!, null!, manager, NullLogger<TrailerIntroProvider>.Instance);
+        _provider = new(null!, null!, manager, TrailerRatingPolicyTests.CreatePolicy(), NullLogger<TrailerIntroProvider>.Instance);
     }
 
     [Theory]
@@ -145,6 +145,11 @@ public sealed class TrailerSelectionTests : IDisposable
     private Video Trailer(string name, string? json)
     {
         var path = Path.Combine(_directory, name + ".mp4");
+        if (json != null)
+        {
+            json = json.Replace("\"officialRating\":\"PG\"", "\"certifications\":[{\"country\":\"US\",\"rating\":\"PG\"}]")
+                .Replace("\"officialRating\":\"R\"", "\"certifications\":[{\"country\":\"US\",\"rating\":\"R\"}]");
+        }
         if (json != null) File.WriteAllText(Path.ChangeExtension(path, ".json"), json);
         return new Video { Id = Guid.NewGuid(), Path = path };
     }

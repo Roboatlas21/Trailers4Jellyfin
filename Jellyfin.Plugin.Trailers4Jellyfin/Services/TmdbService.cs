@@ -197,91 +197,48 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
             return results;
         }
 
-        /// <summary>
-        /// Gets the movie certification used for trailer parental-rating filtering.
-        /// US is preferred because TMDB's trailer/movie metadata is most consistently
-        /// populated there, followed by Canada, the UK and Australia.
-        /// </summary>
-        public async Task<string?> GetCertificationAsync(
-            string tmdbId,
-            string apiKey,
-            CancellationToken ct)
+        /// <summary>Returns all regional movie certifications in release-type priority order.
+        /// Null means lookup failed; an empty list means TMDB has no certifications.</summary>
+        public async Task<List<TrailerCertification>?> GetCertificationsAsync(
+            string tmdbId, string apiKey, CancellationToken ct)
         {
             try
             {
-                var url = $"{BaseUrl}/movie/{tmdbId}/release_dates";
-                using var request = new HttpRequestMessage(HttpMethod.Get, url);
+                using var request = new HttpRequestMessage(HttpMethod.Get, $"{BaseUrl}/movie/{tmdbId}/release_dates");
                 ApplyAuth(request, apiKey);
                 using var response = await _httpClient.SendAsync(request, ct).ConfigureAwait(false);
                 response.EnsureSuccessStatusCode();
-                var json = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-                using var doc = JsonDocument.Parse(json);
-
-                var results = doc.RootElement.GetProperty("results")
-                    .EnumerateArray()
-                    .ToList();
-
-                foreach (var country in new[] { "US", "CA", "GB", "AU" })
-                {
-                    var entry = results.FirstOrDefault(r =>
-                        string.Equals(
-                            r.TryGetProperty("iso_3166_1", out var c) ? c.GetString() : null,
-                            country,
-                            StringComparison.OrdinalIgnoreCase));
-
-                    var certification = PickCertification(entry);
-                    if (!string.IsNullOrWhiteSpace(certification))
-                        return certification;
-                }
-
-                foreach (var entry in results)
-                {
-                    var certification = PickCertification(entry);
-                    if (!string.IsNullOrWhiteSpace(certification))
-                        return certification;
-                }
+                using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false));
+                return ParseCertifications(doc.RootElement);
             }
-            catch (OperationCanceledException) { throw; }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch (Exception ex)
             {
-                _logger.LogWarning(
-                    ex,
-                    "|Trailers4Jellyfin| Failed to fetch parental rating for TMDB ID {Id}",
-                    tmdbId);
+                _logger.LogWarning(ex, "|Trailers4Jellyfin| Failed to fetch parental ratings for TMDB ID {Id}", tmdbId);
+                return null;
             }
-
-            return null;
         }
 
-        private static string? PickCertification(JsonElement countryEntry)
+        internal static List<TrailerCertification> ParseCertifications(JsonElement root)
         {
-            if (countryEntry.ValueKind != JsonValueKind.Object
-                || !countryEntry.TryGetProperty("release_dates", out var dates))
-                return null;
-
-            var candidates = dates
-                .EnumerateArray()
-                .Where(d =>
-                    d.TryGetProperty("certification", out var c)
-                    && !string.IsNullOrWhiteSpace(c.GetString()))
-                .OrderBy(d =>
-                {
-                    var type = d.TryGetProperty("type", out var t) ? t.GetInt32() : 99;
-                    return type switch
+            return root.GetProperty("results").EnumerateArray()
+                .Where(c => !string.IsNullOrWhiteSpace(c.GetProperty("iso_3166_1").GetString()))
+                .SelectMany(c => c.GetProperty("release_dates").EnumerateArray()
+                    .OrderBy(d => d.GetProperty("type").GetInt32() switch
                     {
                         3 => 0, // Theatrical
-                        2 => 1, // Theatrical (limited)
+                        2 => 1, // Limited theatrical
                         4 => 2, // Digital
                         6 => 3, // TV
                         5 => 4, // Physical
                         _ => 5,
-                    };
-                })
+                    })
+                    .Select(d => new TrailerCertification(
+                        c.GetProperty("iso_3166_1").GetString()!.Trim().ToUpperInvariant(),
+                        d.GetProperty("certification").GetString()?.Trim() ?? string.Empty)))
+                .Where(c => !string.IsNullOrWhiteSpace(c.Rating))
+                .Distinct()
                 .ToList();
-
-            return candidates.Count == 0
-                ? null
-                : candidates[0].GetProperty("certification").GetString();
         }
 
         public async Task<string?> SearchMovieAsync(string title, int? year, string apiKey, CancellationToken ct)

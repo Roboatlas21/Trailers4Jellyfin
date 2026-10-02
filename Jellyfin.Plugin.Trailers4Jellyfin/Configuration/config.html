@@ -57,6 +57,13 @@
                             For trailers, unwatched status takes priority over genre matching; parental-rating filtering still applies.
                         </p>
 
+                        <p class="fieldDescription">
+                            Movie trailers obey the current user's parental maximum and the movie's recognized rating.
+                            Regional certifications use the library/server metadata country, then a consistent country fallback.
+                            Unresolved ratings follow the user's Block unrated trailers preference.
+                            Run Download TMDB Trailers to refresh existing regional rating metadata.
+                        </p>
+
                         <div class="checkboxContainer checkboxContainer-withDescription">
                             <label>
                                 <input is="emby-checkbox" type="checkbox" id="enable-cinema-mode" />

@@ -39,11 +39,15 @@ Downloaded trailers keep a JSON sidecar next to each video. The sidecar stores:
 - title
 - year
 - genres
-- parental rating/certification
+- regional parental certifications with their country codes
 
 Genre matching reads the sidecar directly, so it does not depend on a Jellyfin Trailers library.
 
-Parental-rating filtering also reads the stored certification. Unknown/missing ratings keep the existing permissive behavior and are allowed. Existing legacy sidecars are backfilled when the scheduled task encounters the corresponding downloaded trailer again.
+Parental-rating filtering uses Jellyfin's country-aware rating scores, including subratings. Certifications are tried in the movie library's metadata country (or server country), then US, CA, GB, AU, then other countries alphabetically. Within a country, theatrical certifications take priority, followed by limited theatrical, digital, TV, physical and other releases. Missing, NR and unrecognized entries are skipped until a usable rating is found; ratings are never selected by lowest age.
+
+A trailer must satisfy both the current user's parental maximum and the feature's recognized rating (including a custom rating, when set). An unknown feature rating removes only the feature comparison. Unresolved trailers follow the user's **Block unrated trailers** preference. All selection fallbacks obey these limits; if no trailers qualify, the trailer block is skipped. The advertised movie's rating is a proxy, not a separate certification of the trailer itself.
+
+The scheduled download task upgrades regional certifications for all registered trailers with a sidecar TMDB ID, even when the movie is outside the current download sources. Successful empty lookups are cached; failed lookups are retried on a later task run. Bare legacy rating labels without country provenance remain unresolved until refreshed; qualified legacy labels can still be interpreted. Upgrades preserve videos, registered clip IDs, watched history and other sidecar fields. Playback uses local metadata only and never waits for TMDB.
 
 ## Requirements
 

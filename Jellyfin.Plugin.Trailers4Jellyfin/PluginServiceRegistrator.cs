@@ -14,6 +14,7 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin
         public void RegisterServices(IServiceCollection serviceCollection, IServerApplicationHost applicationHost)
         {
             serviceCollection.AddSingleton<TmdbService>();
+            serviceCollection.AddSingleton<TrailerRatingPolicy>();
             serviceCollection.AddSingleton<TrailerDownloadService>();
             serviceCollection.AddSingleton<CinemaAssetRegistry>();
             serviceCollection.AddSingleton<EpisodePrerollStateStore>();

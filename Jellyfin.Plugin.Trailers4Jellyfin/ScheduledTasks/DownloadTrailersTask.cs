@@ -74,18 +74,35 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
                 return;
             }
 
+            Directory.CreateDirectory(config.DownloadFolder);
+
+            var registeredTrailers = _assetRegistry.SyncDownloadedTrailers(config.DownloadFolder);
+
+            // Upgrade every registered trailer, including older movies outside today's TMDB sources.
+            foreach (var trailer in registeredTrailers)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                try
+                {
+                    await TrailerMetadataRefresh.RefreshAsync(
+                        trailer.Path,
+                        (id, ct) => _tmdbService.GetCertificationsAsync(id.ToString(), config.TmdbApiKey, ct),
+                        cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+                {
+                    _logger.LogWarning(ex, "|Trailers4Jellyfin| Could not refresh trailer metadata: {Path}", trailer.Path);
+                }
+            }
+
             if (!config.SourceNowPlaying && !config.SourceUpcoming && !config.SourcePopular && !config.SourceTopRated)
             {
                 _logger.LogWarning("|Trailers4Jellyfin| No TMDB sources selected. Enable at least one source. Skipping task.");
                 return;
             }
 
-            Directory.CreateDirectory(config.DownloadFolder);
-
-            var registeredTrailers = _assetRegistry.SyncDownloadedTrailers(config.DownloadFolder);
             CleanupTrailers(config, registeredTrailers);
             _assetRegistry.SyncDownloadedTrailers(config.DownloadFolder);
-
             progress.Report(5);
 
             var libraryTmdbIds = config.SkipMoviesInLibrary
@@ -210,9 +227,6 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
                     var root = doc.RootElement;
                     if (root.ValueKind == JsonValueKind.Object
                         && root.TryGetProperty("tmdbId", out _)
-                        && root.TryGetProperty("officialRating", out var rating)
-                        && rating.ValueKind == JsonValueKind.String
-                        && !string.IsNullOrWhiteSpace(rating.GetString())
                         && root.TryGetProperty("genres", out var genres)
                         && genres.ValueKind == JsonValueKind.Array
                         && genres.EnumerateArray().All(g => g.ValueKind == JsonValueKind.String))
@@ -222,7 +236,7 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
                 }
                 catch (JsonException)
                 {
-                    // Rewrite malformed/legacy metadata below.
+                    // Rewrite malformed metadata below; valid sidecars are upgraded separately.
                 }
             }
 
@@ -241,8 +255,8 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
                 .Where(n => !string.IsNullOrEmpty(n))
                 .ToList();
 
-            var officialRating = await _tmdbService
-                .GetCertificationAsync(movie.Id.ToString(), apiKey, ct)
+            var certifications = await _tmdbService
+                .GetCertificationsAsync(movie.Id.ToString(), apiKey, ct)
                 .ConfigureAwait(false);
 
             var sidecarPath = Path.ChangeExtension(trailerPath, ".json");
@@ -252,18 +266,9 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
                 title = movie.Title,
                 year = movie.Year,
                 genres,
-                officialRating,
+                certifications,
             });
-            var tempPath = sidecarPath + ".tmp";
-            try
-            {
-                await File.WriteAllTextAsync(tempPath, json, ct).ConfigureAwait(false);
-                File.Move(tempPath, sidecarPath, overwrite: true);
-            }
-            finally
-            {
-                File.Delete(tempPath);
-            }
+            await TrailerMetadataRefresh.WriteAsync(sidecarPath, json, ct).ConfigureAwait(false);
         }
 
         private HashSet<string> GetLibraryTmdbIds()

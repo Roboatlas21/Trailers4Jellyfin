@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using Jellyfin.Database.Implementations.Entities;
 using MediaBrowser.Controller.Entities;
@@ -19,6 +18,7 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
         private readonly CinemaAssetRegistry _assetRegistry;
         private readonly EpisodePrerollCoordinator _episodePrerollCoordinator;
         private readonly IUserDataManager _userDataManager;
+        private readonly TrailerRatingPolicy _ratings;
         private readonly ILogger<TrailerIntroProvider> _logger;
 
         public string Name => "Trailers4Jellyfin";
@@ -27,11 +27,13 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
             CinemaAssetRegistry assetRegistry,
             EpisodePrerollCoordinator episodePrerollCoordinator,
             IUserDataManager userDataManager,
+            TrailerRatingPolicy ratings,
             ILogger<TrailerIntroProvider> logger)
         {
             _assetRegistry = assetRegistry;
             _episodePrerollCoordinator = episodePrerollCoordinator;
             _userDataManager = userDataManager;
+            _ratings = ratings;
             _logger = logger;
         }
 
@@ -136,23 +138,17 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
             if (config.NumberOfTrailers <= 0 || trailerItems.Count == 0)
                 return new List<Video>();
 
-            int? movieSeverity = !string.IsNullOrWhiteSpace(feature.OfficialRating)
-                && RatingSeverity.TryGetValue(feature.OfficialRating, out var severity)
-                    ? severity : null;
+            var country = _ratings.GetMetadataCountry(feature);
+            var movieRating = _ratings.GetFeatureRating(feature, country);
             var movieGenres = new HashSet<string>(
                 config.EnableGenreMatching ? feature.Genres ?? Array.Empty<string>() : Array.Empty<string>(),
                 StringComparer.OrdinalIgnoreCase);
             var watchedIds = GetWatchedIds(trailerItems, user, config.PreferUnwatchedTrailers);
 
-            // Read each sidecar once. An invalid sidecar only excludes that trailer.
-            // Missing/unknown ratings retain the existing permissive behavior.
+            // Read each sidecar once. Rating restrictions apply before any selection preferences.
             return trailerItems
                 .Select(trailer => (trailer, metadata: ReadMetadata(trailer.Path)))
-                .Where(x => x.metadata != null
-                    && (movieSeverity == null
-                        || string.IsNullOrWhiteSpace(x.metadata.OfficialRating)
-                        || !RatingSeverity.TryGetValue(x.metadata.OfficialRating, out var trailerSeverity)
-                        || trailerSeverity <= movieSeverity.Value))
+                .Where(x => x.metadata != null && _ratings.IsAllowed(x.metadata, country, movieRating, user))
                 .OrderBy(x => watchedIds.Contains(x.trailer.Id))
                 .ThenByDescending(x => x.metadata!.Genres?.Count(movieGenres.Contains) ?? 0)
                 .ThenBy(_ => Random.Shared.Next())
@@ -183,28 +179,6 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
                 .ToHashSet();
         }
 
-        private static readonly Dictionary<string, int> RatingSeverity =
-            new(StringComparer.OrdinalIgnoreCase)
-            {
-                // MPAA / common US labels
-                { "G", 1 }, { "PG", 2 }, { "PG-13", 3 }, { "R", 4 }, { "NC-17", 5 },
-                { "US-G", 1 }, { "US-PG", 2 }, { "US-PG-13", 3 }, { "US-R", 4 }, { "US-NC-17", 5 },
-
-                // Canadian labels
-                { "CA-G", 1 }, { "CA-PG", 2 }, { "14A", 3 }, { "CA-14A", 3 },
-                { "18A", 4 }, { "CA-18A", 4 }, { "CA-R", 4 },
-
-                // US TV
-                { "TV-Y", 1 }, { "TV-G", 1 }, { "TV-Y7", 2 }, { "TV-PG", 2 },
-                { "TV-14", 3 }, { "TV-MA", 4 },
-
-                // BBFC (UK)
-                { "U", 1 }, { "12A", 3 }, { "15", 4 }, { "R18", 6 },
-
-                // European age labels
-                { "0", 1 }, { "6", 2 }, { "12", 3 }, { "16", 4 }, { "18", 5 },
-            };
-
         private TrailerMetadata? ReadMetadata(string? trailerPath)
         {
             var sidecarPath = Path.ChangeExtension(trailerPath, ".json");
@@ -233,13 +207,5 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
             intros.Add(ToIntroInfo(items[Random.Shared.Next(items.Count)]));
         }
 
-        private sealed class TrailerMetadata
-        {
-            [JsonPropertyName("genres")]
-            public string[]? Genres { get; set; }
-
-            [JsonPropertyName("officialRating")]
-            public string? OfficialRating { get; set; }
-        }
     }
 }
