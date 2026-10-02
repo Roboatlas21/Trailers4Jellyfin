@@ -44,12 +44,11 @@
                     <fieldset class="verticalSection verticalSection-extrabottompadding">
                         <legend><h3 class="sectionTitle">Cinema Mode</h3></legend>
                         <p class="fieldDescription">
-                            When enabled, this plugin plays trailers from your download folder before each movie.<br />
-                            <strong>Two steps required:</strong><br />
-                            1. Add the <em>Download Folder</em> below as a Jellyfin <strong>Movies</strong> library
-                               (e.g. named "Trailers") and run a library scan.<br />
-                            2. Enable <strong>Cinema Mode</strong> in each user's Jellyfin playback settings
-                               (User settings → Playback → Cinema mode → On).
+                            When enabled, this plugin privately registers downloaded trailers with Jellyfin.
+                            The <em>Download Folder</em> below does not need to be added as a Jellyfin library,
+                            so trailers stay out of navigation and Recently Added.<br />
+                            Enable <strong>Cinema Mode</strong> in each user's Jellyfin playback settings
+                            (User settings → Playback → Cinema mode → On).
                         </p>
 
                         <div class="checkboxContainer checkboxContainer-withDescription">
@@ -189,8 +188,8 @@
                             <label class="inputLabel inputLabelUnfocused" for="download-folder">Download Folder</label>
                             <input type="text" id="download-folder" is="emby-input" placeholder="/media/trailers" />
                             <div class="fieldDescription">
-                                Where trailers are saved. Must be added as a Jellyfin Movies library and scanned
-                                so the intro provider can reference trailers by their library ID.
+                                Where downloaded trailers are saved. Trailers4Jellyfin registers these files internally;
+                                do not add this folder as a Jellyfin library.
                             </div>
                         </div>
 

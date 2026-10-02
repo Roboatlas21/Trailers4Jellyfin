@@ -14,6 +14,7 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin
         {
             serviceCollection.AddSingleton<TmdbService>();
             serviceCollection.AddSingleton<TrailerDownloadService>();
+            serviceCollection.AddSingleton<CinemaAssetRegistry>();
             serviceCollection.AddTransient<IScheduledTask, DownloadTrailersTask>();
             serviceCollection.AddSingleton<IIntroProvider, TrailerIntroProvider>();
         }

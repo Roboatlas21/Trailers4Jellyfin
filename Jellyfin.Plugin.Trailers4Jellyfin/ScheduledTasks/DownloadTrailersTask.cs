@@ -25,6 +25,7 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
         private readonly IUserDataManager _userDataManager;
         private readonly TmdbService _tmdbService;
         private readonly TrailerDownloadService _downloadService;
+        private readonly CinemaAssetRegistry _assetRegistry;
 
         public string Name => "Download TMDB Trailers";
         public string Key => "Trailers4JellyfinDownload";
@@ -37,7 +38,8 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
             IUserManager userManager,
             IUserDataManager userDataManager,
             TmdbService tmdbService,
-            TrailerDownloadService downloadService)
+            TrailerDownloadService downloadService,
+            CinemaAssetRegistry assetRegistry)
         {
             _logger = logger;
             _libraryManager = libraryManager;
@@ -45,6 +47,7 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
             _userDataManager = userDataManager;
             _tmdbService = tmdbService;
             _downloadService = downloadService;
+            _assetRegistry = assetRegistry;
         }
 
         public IEnumerable<TaskTriggerInfo> GetDefaultTriggers()
@@ -80,7 +83,9 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
 
             Directory.CreateDirectory(config.DownloadFolder);
 
-            CleanupTrailers(config);
+            var registeredTrailers = _assetRegistry.SyncDownloadedTrailers(config.DownloadFolder);
+            CleanupTrailers(config, registeredTrailers);
+            _assetRegistry.SyncDownloadedTrailers(config.DownloadFolder);
 
             progress.Report(5);
 
@@ -176,6 +181,7 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
                 }
             }
 
+            _assetRegistry.SyncDownloadedTrailers(config.DownloadFolder);
             _logger.LogInformation("|Trailers4Jellyfin| Task complete. Downloaded {Count} trailer(s).", downloaded);
             progress.Report(100);
         }
@@ -235,15 +241,13 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
             throw new MissingMethodException("Neither GetUsers() nor Users found on IUserManager.");
         }
 
-        private void CleanupTrailers(Configuration.PluginConfiguration config)
+        private void CleanupTrailers(
+            Configuration.PluginConfiguration config,
+            IReadOnlyList<Video> registeredTrailers)
         {
-            var downloadFolder = config.DownloadFolder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-
-            // Build a lookup of library items by path for watched-status checks.
-            var trailerItemsByPath = _libraryManager
-                .GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { BaseItemKind.Movie }, Recursive = true })
-                .Where(t => t.Path != null && t.Path.StartsWith(downloadFolder, StringComparison.OrdinalIgnoreCase))
-                .ToDictionary(t => t.Path!, StringComparer.OrdinalIgnoreCase);
+            var trailerItemsByPath = registeredTrailers
+                .Where(t => !string.IsNullOrWhiteSpace(t.Path))
+                .ToDictionary(t => Path.GetFullPath(t.Path!), CinemaAssetRegistry.PathComparer);
 
             // Sweep up intermediates from a previously interrupted download. Cleanup runs before
             // any download in this task, so nothing here is in flight.
@@ -276,8 +280,8 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
                     var users = GetAllUsers();
                     foreach (var file in files.ToList())
                     {
-                        if (!trailerItemsByPath.TryGetValue(file, out var item)) continue;
-                        bool watched = users.Any(u => _userDataManager.GetUserData(u, item).Played);
+                        if (!trailerItemsByPath.TryGetValue(Path.GetFullPath(file), out var item)) continue;
+                        bool watched = users.Any(u => _userDataManager.GetUserData(u, item)?.Played == true);
                         if (!watched) continue;
 
                         _logger.LogInformation("|Trailers4Jellyfin| Deleting watched trailer: {File}", Path.GetFileName(file));
