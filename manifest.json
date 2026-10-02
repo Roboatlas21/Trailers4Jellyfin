@@ -9,6 +9,14 @@
         "imageUrl": "https://raw.githubusercontent.com/Roboatlas21/Trailers4Jellyfin/main/Jellyfin.Plugin.Trailers4Jellyfin/Images/logo.svg",
         "versions": [
             {
+                "checksum": "42b7bb59176e3239db589c4db5bb3822",
+                "changelog": "- Add Browse buttons using Jellyfin's server folder picker for trailer downloads and all pre-roll folders.\n- Keep manual path entry and existing settings; folder selections are applied when Save is pressed.\n",
+                "targetAbi": "12.1.0.0",
+                "sourceUrl": "https://github.com/Roboatlas21/Trailers4Jellyfin/releases/download/v2.0.18.1/trailers4jellyfin_2.0.18.1.zip",
+                "timestamp": "2026-10-02T16:19:47Z",
+                "version": "2.0.18.1"
+            },
+            {
                 "checksum": "f6b33206dc29a9c62f101be65d3a1d69",
                 "changelog": "- Requires Jellyfin 12.1 and .NET 10.\n- Register trailers and pre-rolls privately without visible Jellyfin libraries.\n- Add optional trailer and feature pre-roll folders for movies.\n- Add per-user episode commercials with configurable chance, cooldown, spacing, and rolling limits; default chance is 75%.\n- Preserve genre and parental-rating filtering, and skip malformed trailer metadata safely.\n- Publish downloaded trailers only after video and metadata are complete.\n- Fix case-sensitive asset paths on Linux and preserve existing plugin settings and external yt-dlp wrappers.\n",
                 "targetAbi": "12.1.0.0",
