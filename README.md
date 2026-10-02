@@ -95,7 +95,7 @@ Use **Browse** beside any folder field to select a folder on the Jellyfin server
 | **Skip trailers for the movie being played** | Excludes all trailers advertising the current TMDB movie; default on |
 | **Feature Pre-Roll Folder** | Optional folder; one random video plays after trailers and before the movie |
 
-Each clip type has its own **Prefer unwatched** checkbox: trailer pre-rolls, trailers, feature pre-rolls, and episode pre-rolls. All four default to off. When enabled, the plugin prefers clips Jellyfin has not marked watched for the current user's ID; each user's history is independent, and no visible media library is required.
+Each clip type has its own **Prefer unwatched** checkbox: trailer pre-rolls, trailers, feature pre-rolls, and episode pre-rolls. All four default to on. Existing saved values, including explicit off choices, are preserved; missing values use the new default. When enabled, the plugin prefers clips Jellyfin has not marked watched for the current user's ID; each user's history is independent, and no visible media library is required.
 
 Pre-rolls are chosen randomly from the unwatched clips, falling back to the full pool once all are watched. Their selection behavior and episode frequency limits are unchanged. Selection does not mark a clip watched or reset watched history; Jellyfin's playback tracking determines that status.
 

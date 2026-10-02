@@ -52,7 +52,8 @@
                             enabled in their client playback settings.
                         </p>
                         <p class="fieldDescription">
-                            Each <strong>Prefer unwatched</strong> option uses the current Jellyfin user's watched status.
+                            Each <strong>Prefer unwatched</strong> option defaults to on and uses the current Jellyfin user's watched status.
+                            Existing saved choices are preserved.
                             Watched clips remain available when no unwatched clips remain, or to fill the requested trailer count.
                             For trailers, genre groups are chosen first. Within that group, prefer unwatched trailers, then replay the oldest-watched.
                         </p>
@@ -475,10 +476,10 @@
                 ApiClient.getPluginConfiguration(pluginId).then(function (config) {
                     document.getElementById('tmdb-api-key').value           = config.TmdbApiKey || '';
                     document.getElementById('enable-cinema-mode').checked   = config.EnableCinemaMode !== false;
-                    document.getElementById('prefer-unwatched-trailer-prerolls').checked = !!config.PreferUnwatchedTrailerPreRolls;
-                    document.getElementById('prefer-unwatched-trailers').checked = !!config.PreferUnwatchedTrailers;
-                    document.getElementById('prefer-unwatched-feature-prerolls').checked = !!config.PreferUnwatchedFeaturePreRolls;
-                    document.getElementById('prefer-unwatched-episode-prerolls').checked = !!config.PreferUnwatchedEpisodePreRolls;
+                    document.getElementById('prefer-unwatched-trailer-prerolls').checked = config.PreferUnwatchedTrailerPreRolls !== false;
+                    document.getElementById('prefer-unwatched-trailers').checked = config.PreferUnwatchedTrailers !== false;
+                    document.getElementById('prefer-unwatched-feature-prerolls').checked = config.PreferUnwatchedFeaturePreRolls !== false;
+                    document.getElementById('prefer-unwatched-episode-prerolls').checked = config.PreferUnwatchedEpisodePreRolls !== false;
                     document.getElementById('trailer-preroll-folder').value  = config.TrailerPreRollFolder || '';
                     document.getElementById('num-trailers').value           = config.NumberOfTrailers ?? 2;
                     document.getElementById('enable-genre-matching').checked = config.EnableGenreMatching !== false;
