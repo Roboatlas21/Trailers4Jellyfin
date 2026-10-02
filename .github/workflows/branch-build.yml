@@ -1,0 +1,31 @@
+name: Branch Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feat/internal-cinema-mode-assets
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build
+        run: |
+          dotnet publish             Jellyfin.Plugin.Trailers4Jellyfin/Jellyfin.Plugin.Trailers4Jellyfin.csproj             --configuration Release             --output bin
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: trailers4jellyfin-branch-build
+          path: bin/
+          if-no-files-found: error
