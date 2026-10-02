@@ -167,13 +167,17 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
                 var trailer = trailers[0];
                 _logger.LogInformation("|Trailers4Jellyfin| Downloading '{Trailer}' for '{Movie}'", trailer.Name, movie.Title);
 
-                var success = await _downloadService.DownloadAsync(
-                    trailer.Key,
+                var success = await TrailerDownloadService.DownloadAndPublishAsync(
                     outputPath,
-                    config.PreferredVideoHeight,
-                    config.YtDlpPath,
-                    config.CookiesFilePath,
-                    config.FfmpegPath,
+                    stagingPath => _downloadService.DownloadAsync(
+                        trailer.Key,
+                        stagingPath,
+                        config.PreferredVideoHeight,
+                        config.YtDlpPath,
+                        config.CookiesFilePath,
+                        config.FfmpegPath,
+                        cancellationToken),
+                    () => WriteTrailerMetadataAsync(outputPath, movie, genreMap, config.TmdbApiKey, cancellationToken),
                     cancellationToken).ConfigureAwait(false);
 
                 if (success)
@@ -183,12 +187,6 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
                         "|Trailers4Jellyfin| [{Done}/{Max}] Saved trailer for '{Movie}' → {Path}",
                         downloaded, config.MaxTrailersToDownload, movie.Title, outputPath);
 
-                    await WriteTrailerMetadataAsync(
-                        outputPath,
-                        movie,
-                        genreMap,
-                        config.TmdbApiKey,
-                        cancellationToken).ConfigureAwait(false);
                 }
             }
 
@@ -257,7 +255,16 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
                 genres,
                 officialRating,
             });
-            await File.WriteAllTextAsync(sidecarPath, json, ct).ConfigureAwait(false);
+            var tempPath = sidecarPath + ".tmp";
+            try
+            {
+                await File.WriteAllTextAsync(tempPath, json, ct).ConfigureAwait(false);
+                File.Move(tempPath, sidecarPath, overwrite: true);
+            }
+            finally
+            {
+                File.Delete(tempPath);
+            }
         }
 
         private HashSet<string> GetLibraryTmdbIds()

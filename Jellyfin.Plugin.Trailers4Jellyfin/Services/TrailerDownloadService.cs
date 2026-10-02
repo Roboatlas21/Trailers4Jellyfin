@@ -93,6 +93,33 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
                 .ConfigureAwait(false);
         }
 
+        internal static async Task<bool> DownloadAndPublishAsync(
+            string outputPath,
+            Func<string, Task<bool>> download,
+            Func<Task> prepareMetadata,
+            CancellationToken ct)
+        {
+            // Keep the final extension for yt-dlp's muxer, but hide the file from
+            // the registry until both the download and its metadata are ready.
+            var stagingPath = Path.ChangeExtension(outputPath, ".temp" + Path.GetExtension(outputPath));
+            File.Delete(stagingPath);
+            try
+            {
+                if (!await download(stagingPath).ConfigureAwait(false))
+                    return false;
+
+                ct.ThrowIfCancellationRequested();
+                await prepareMetadata().ConfigureAwait(false);
+                ct.ThrowIfCancellationRequested();
+                File.Move(stagingPath, outputPath, overwrite: true);
+                return true;
+            }
+            finally
+            {
+                File.Delete(stagingPath);
+            }
+        }
+
         // Intermediates yt-dlp leaves behind when a download is interrupted:
         // "Movie (2025).f137.mp4" (video-only), ".temp.mp4" (merge target), ".part", ".ytdl".
         // Several of these end in .mp4, so a plain "*.mp4" glob would mistake them for trailers.
