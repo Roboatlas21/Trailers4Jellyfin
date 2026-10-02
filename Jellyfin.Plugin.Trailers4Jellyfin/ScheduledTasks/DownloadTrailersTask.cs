@@ -146,6 +146,12 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
                 if (config.SkipAlreadyDownloaded && File.Exists(outputPath))
                 {
                     _logger.LogDebug("|Trailers4Jellyfin| Already downloaded: {Path}", outputPath);
+                    await EnsureTrailerMetadataAsync(
+                        outputPath,
+                        movie,
+                        genreMap,
+                        config.TmdbApiKey,
+                        cancellationToken).ConfigureAwait(false);
                     continue;
                 }
 
@@ -177,7 +183,12 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
                         "|Trailers4Jellyfin| [{Done}/{Max}] Saved trailer for '{Movie}' → {Path}",
                         downloaded, config.MaxTrailersToDownload, movie.Title, outputPath);
 
-                    await SaveSidecarAsync(outputPath, movie.GenreIds, genreMap, cancellationToken).ConfigureAwait(false);
+                    await WriteTrailerMetadataAsync(
+                        outputPath,
+                        movie,
+                        genreMap,
+                        config.TmdbApiKey,
+                        cancellationToken).ConfigureAwait(false);
                 }
             }
 
@@ -186,23 +197,66 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
             progress.Report(100);
         }
 
-        private async Task SaveSidecarAsync(
+        private async Task EnsureTrailerMetadataAsync(
             string trailerPath,
-            IReadOnlyList<int> genreIds,
+            TmdbMovieResult movie,
             Dictionary<int, string> genreMap,
+            string apiKey,
             CancellationToken ct)
         {
-            if (genreIds == null || genreIds.Count == 0) return;
+            var sidecarPath = Path.ChangeExtension(trailerPath, ".json");
+            if (File.Exists(sidecarPath))
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(await File.ReadAllTextAsync(sidecarPath, ct).ConfigureAwait(false));
+                    var root = doc.RootElement;
+                    if (root.ValueKind == JsonValueKind.Object
+                        && root.TryGetProperty("tmdbId", out _)
+                        && root.TryGetProperty("officialRating", out var rating)
+                        && rating.ValueKind == JsonValueKind.String
+                        && !string.IsNullOrWhiteSpace(rating.GetString())
+                        && root.TryGetProperty("genres", out var genres)
+                        && genres.ValueKind == JsonValueKind.Array
+                        && genres.EnumerateArray().All(g => g.ValueKind == JsonValueKind.String))
+                    {
+                        return;
+                    }
+                }
+                catch (JsonException)
+                {
+                    // Rewrite malformed/legacy metadata below.
+                }
+            }
 
-            var genres = genreIds
+            await WriteTrailerMetadataAsync(trailerPath, movie, genreMap, apiKey, ct).ConfigureAwait(false);
+        }
+
+        private async Task WriteTrailerMetadataAsync(
+            string trailerPath,
+            TmdbMovieResult movie,
+            Dictionary<int, string> genreMap,
+            string apiKey,
+            CancellationToken ct)
+        {
+            var genres = movie.GenreIds
                 .Select(id => genreMap.TryGetValue(id, out var name) ? name : null)
                 .Where(n => !string.IsNullOrEmpty(n))
                 .ToList();
 
-            if (genres.Count == 0) return;
+            var officialRating = await _tmdbService
+                .GetCertificationAsync(movie.Id.ToString(), apiKey, ct)
+                .ConfigureAwait(false);
 
             var sidecarPath = Path.ChangeExtension(trailerPath, ".json");
-            var json = JsonSerializer.Serialize(new { genres });
+            var json = JsonSerializer.Serialize(new
+            {
+                tmdbId = movie.Id,
+                title = movie.Title,
+                year = movie.Year,
+                genres,
+                officialRating,
+            });
             await File.WriteAllTextAsync(sidecarPath, json, ct).ConfigureAwait(false);
         }
 

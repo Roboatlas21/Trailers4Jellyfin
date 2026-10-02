@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using Jellyfin.Database.Implementations.Entities;
 using MediaBrowser.Controller.Entities;
@@ -35,6 +36,7 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
             }
             catch (Exception ex)
             {
+                // Intro providers must never be able to break main-feature playback.
                 _logger.LogError(
                     ex,
                     "|Trailers4Jellyfin| GetIntros threw unexpectedly — returning no intros to protect playback");
@@ -48,12 +50,15 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
             if (config == null || !config.EnableCinemaMode)
                 return Task.FromResult(Enumerable.Empty<IntroInfo>());
 
+            // Only inject before movies.
             if (item is not Movie)
                 return Task.FromResult(Enumerable.Empty<IntroInfo>());
 
             var assets = _assetRegistry.SyncConfiguredAssets(config);
             var intros = new List<IntroInfo>();
 
+            // Match CherryFloors Cinema Mode's ordering:
+            // trailer pre-roll -> trailers -> feature pre-roll -> main feature.
             AddRandom(intros, assets.TrailerPreRolls);
 
             var trailerItems = assets.DownloadedTrailers.ToList();
@@ -74,99 +79,73 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
             return Task.FromResult<IEnumerable<IntroInfo>>(intros);
         }
 
-        private List<Video> SelectTrailers(
+        internal List<Video> SelectTrailers(
             BaseItem feature,
-            List<Video> trailerItems,
+            IReadOnlyList<Video> trailerItems,
             Configuration.PluginConfiguration config)
         {
             if (config.NumberOfTrailers <= 0 || trailerItems.Count == 0)
                 return new List<Video>();
 
-            if (!string.IsNullOrWhiteSpace(feature.OfficialRating)
-                && RatingSeverity.TryGetValue(feature.OfficialRating, out var movieSeverity))
-            {
-                var filtered = trailerItems
-                    .Where(t => IsRatingAppropriate(t, movieSeverity))
-                    .ToList();
+            int? movieSeverity = !string.IsNullOrWhiteSpace(feature.OfficialRating)
+                && RatingSeverity.TryGetValue(feature.OfficialRating, out var severity)
+                    ? severity : null;
+            var movieGenres = new HashSet<string>(
+                config.EnableGenreMatching ? feature.Genres ?? Array.Empty<string>() : Array.Empty<string>(),
+                StringComparer.OrdinalIgnoreCase);
 
-                if (filtered.Count > 0)
-                {
-                    trailerItems = filtered;
-                }
-                else
-                {
-                    _logger.LogDebug(
-                        "|Trailers4Jellyfin| No trailers at or below rating '{Rating}' for '{Movie}', skipping rating filter",
-                        feature.OfficialRating,
-                        feature.Name);
-                }
-            }
-
-            if (config.EnableGenreMatching && feature.Genres != null && feature.Genres.Length > 0)
-            {
-                var movieGenres = new HashSet<string>(
-                    feature.Genres,
-                    StringComparer.OrdinalIgnoreCase);
-
-                var scored = trailerItems
-                    .Select(t => (trailer: t, score: GetGenreScore(t.Path!, movieGenres)))
-                    .ToList();
-
-                var matched = scored.Where(x => x.score > 0).ToList();
-                var pool = matched.Count >= config.NumberOfTrailers ? matched : scored;
-
-                return pool
-                    .OrderByDescending(x => x.score)
-                    .ThenBy(_ => Guid.NewGuid())
-                    .Take(config.NumberOfTrailers)
-                    .Select(x => x.trailer)
-                    .ToList();
-            }
-
+            // Read each sidecar once. An invalid sidecar only excludes that trailer.
+            // Missing/unknown ratings retain the existing permissive behavior.
             return trailerItems
-                .OrderBy(_ => Guid.NewGuid())
+                .Select(trailer => (trailer, metadata: ReadMetadata(trailer.Path)))
+                .Where(x => x.metadata != null
+                    && (movieSeverity == null
+                        || string.IsNullOrWhiteSpace(x.metadata.OfficialRating)
+                        || !RatingSeverity.TryGetValue(x.metadata.OfficialRating, out var trailerSeverity)
+                        || trailerSeverity <= movieSeverity.Value))
+                .OrderByDescending(x => x.metadata!.Genres?.Count(movieGenres.Contains) ?? 0)
+                .ThenBy(_ => Random.Shared.Next())
                 .Take(config.NumberOfTrailers)
+                .Select(x => x.trailer)
                 .ToList();
         }
 
         private static readonly Dictionary<string, int> RatingSeverity =
             new(StringComparer.OrdinalIgnoreCase)
             {
+                // MPAA / common US labels
                 { "G", 1 }, { "PG", 2 }, { "PG-13", 3 }, { "R", 4 }, { "NC-17", 5 },
+                { "US-G", 1 }, { "US-PG", 2 }, { "US-PG-13", 3 }, { "US-R", 4 }, { "US-NC-17", 5 },
+
+                // Canadian labels
+                { "CA-G", 1 }, { "CA-PG", 2 }, { "14A", 3 }, { "CA-14A", 3 },
+                { "18A", 4 }, { "CA-18A", 4 }, { "CA-R", 4 },
+
+                // US TV
                 { "TV-Y", 1 }, { "TV-G", 1 }, { "TV-Y7", 2 }, { "TV-PG", 2 },
                 { "TV-14", 3 }, { "TV-MA", 4 },
+
+                // BBFC (UK)
                 { "U", 1 }, { "12A", 3 }, { "15", 4 }, { "R18", 6 },
+
+                // European age labels
                 { "0", 1 }, { "6", 2 }, { "12", 3 }, { "16", 4 }, { "18", 5 },
             };
 
-        private static bool IsRatingAppropriate(BaseItem trailer, int movieSeverity)
-        {
-            var rating = trailer.OfficialRating;
-            if (string.IsNullOrWhiteSpace(rating))
-                return true;
-
-            return !RatingSeverity.TryGetValue(rating, out var trailerSeverity)
-                || trailerSeverity <= movieSeverity;
-        }
-
-        private static int GetGenreScore(string trailerPath, HashSet<string> movieGenres)
+        private TrailerMetadata? ReadMetadata(string? trailerPath)
         {
             var sidecarPath = Path.ChangeExtension(trailerPath, ".json");
             if (!File.Exists(sidecarPath))
-                return 0;
+                return new TrailerMetadata();
 
             try
             {
-                using var doc = JsonDocument.Parse(File.ReadAllText(sidecarPath));
-                if (!doc.RootElement.TryGetProperty("genres", out var genresEl))
-                    return 0;
-
-                return genresEl.EnumerateArray()
-                    .Count(g => movieGenres.Contains(g.GetString() ?? string.Empty));
+                return JsonSerializer.Deserialize<TrailerMetadata>(File.ReadAllText(sidecarPath));
             }
-            catch
+            catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
             {
-                return 0;
+                _logger.LogWarning(ex, "|Trailers4Jellyfin| Skipping unreadable trailer metadata: {Path}", sidecarPath);
+                return null;
             }
         }
 
@@ -179,6 +158,15 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
                 return;
 
             intros.Add(ToIntroInfo(items[Random.Shared.Next(items.Count)]));
+        }
+
+        private sealed class TrailerMetadata
+        {
+            [JsonPropertyName("genres")]
+            public string[]? Genres { get; set; }
+
+            [JsonPropertyName("officialRating")]
+            public string? OfficialRating { get; set; }
         }
     }
 }
