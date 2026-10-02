@@ -56,11 +56,11 @@ Parental-rating filtering also reads the stored certification. Unknown/missing r
 ### Via Jellyfin Plugin Catalogue
 
 1. In the Jellyfin dashboard go to **Admin → Plugins → Repositories**.
-2. Add the repository URL from the upstream project.
-3. Install **Trailers4Jellyfin** from the catalogue.
+2. Add `https://raw.githubusercontent.com/Roboatlas21/Trailers4Jellyfin/main/manifest.json`.
+3. Install or update **Trailers4Jellyfin** to **2.0.18.0** or newer from the catalogue.
 4. Restart Jellyfin.
 
-For testing this development branch, build/install it manually instead of using the upstream catalogue package.
+This fork uses the same plugin ID and configuration file, so an update preserves existing settings. External yt-dlp wrappers are also preserved. There is no need to uninstall the existing plugin first.
 
 ### Manual build
 

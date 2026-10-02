@@ -1,12 +1,21 @@
 name: Publish Release
 
 on:
+  workflow_dispatch:
   push:
+    branches:
+      - feat/internal-cinema-mode-assets
+    paths:
+      - build.yaml
     tags:
       - 'v*.*.*.*'
 
 permissions:
   contents: write
+
+concurrency:
+  group: publish-release
+  cancel-in-progress: false
 
 jobs:
   release:
@@ -16,8 +25,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          # Use a PAT (or the default GITHUB_TOKEN) so the manifest commit can push to main
-          token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
       - name: Setup .NET 10
@@ -25,59 +32,91 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      - name: Get version from tag
+      - name: Validate release version
         id: version
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          project = ET.parse('Jellyfin.Plugin.Trailers4Jellyfin/Jellyfin.Plugin.Trailers4Jellyfin.csproj')
+          version = project.findtext('.//AssemblyVersion')
+          assert re.fullmatch(r'\d+\.\d+\.\d+\.\d+', version), 'Invalid plugin version'
+          assert project.findtext('.//FileVersion') == version, 'File version mismatch'
+          assert f'version: {version}' in Path('build.yaml').read_text().splitlines(), 'Build version mismatch'
+          if os.environ['GITHUB_REF_TYPE'] == 'tag':
+              assert os.environ['GITHUB_REF_NAME'] == f'v{version}', 'Tag version mismatch'
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              print(f'VERSION={version}', file=output)
+          PY
+
+      - name: Test
+        run: dotnet test Jellyfin.Plugin.Trailers4Jellyfin.Tests/Jellyfin.Plugin.Trailers4Jellyfin.Tests.csproj --configuration Release -warnaserror
 
       - name: Build
         run: |
           dotnet publish \
             Jellyfin.Plugin.Trailers4Jellyfin/Jellyfin.Plugin.Trailers4Jellyfin.csproj \
-            --configuration Release \
-            --output bin
+            --configuration Release --output bin -warnaserror
 
       - name: Package
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
-          VERSION="${{ steps.version.outputs.VERSION }}"
-          # Always include the plugin DLL itself, then all third-party dependencies.
-          # Exclude Jellyfin/MediaBrowser framework DLLs — the server already has those loaded.
-          # Note: grep -Ev "/(Jellyfin\." would also exclude our own plugin DLL, so we add it
-          # explicitly and let the dep scan cover everything else.
-          DEPS=$(find bin -name "*.dll" \
-            | grep -Ev "/(Jellyfin\.|MediaBrowser\.|Microsoft\.|System\.|netstandard|mscorlib)" \
-            | tr '\n' ' ')
-          zip -j "trailers4jellyfin_${VERSION}.zip" \
-            bin/Jellyfin.Plugin.Trailers4Jellyfin.dll \
-            $DEPS
+          # Jellyfin supplies the server assemblies; YoutubeExplode is our only private dependency.
+          zip -j "trailers4jellyfin_${RELEASE_VERSION}.zip" \
+            bin/Jellyfin.Plugin.Trailers4Jellyfin.dll bin/YoutubeExplode.dll
 
-      - name: Checksum
-        id: checksum
-        run: |
-          VERSION="${{ steps.version.outputs.VERSION }}"
-          echo "MD5=$(md5sum trailers4jellyfin_${VERSION}.zip | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
-
-      - name: Update manifest.json and commit to main
+      - name: Prepare catalog entry and release notes
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
           pip install pyyaml --quiet
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          # Switch to the latest main before updating the manifest so there is no
-          # rebase conflict when another commit landed on main since the tag was pushed.
+          # Preserve catalog history from main while using this release's script and build metadata.
           git fetch origin main
-          git checkout main
-          python3 update_manifest.py "${{ steps.version.outputs.VERSION }}" "${{ steps.checksum.outputs.MD5 }}"
-          git add manifest.json
-          git commit -m "chore: update manifest.json for v${{ steps.version.outputs.VERSION }}" || echo "No changes to commit"
-          git push origin main
+          git show origin/main:manifest.json > manifest.json
+          CHECKSUM=$(md5sum "trailers4jellyfin_${RELEASE_VERSION}.zip" | cut -d' ' -f1)
+          python3 update_manifest.py "$RELEASE_VERSION" "$CHECKSUM"
+          cp manifest.json "$RUNNER_TEMP/trailers4jellyfin-manifest.json"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          entry = json.loads(Path('manifest.json').read_text())[0]['versions'][0]
+          url = f"https://raw.githubusercontent.com/{os.environ['GITHUB_REPOSITORY']}/main/manifest.json"
+          Path('release-notes.md').write_text(
+              'Requires Jellyfin 12.1 or newer.\n\n' + entry['changelog'] +
+              '\nInstall or update through **Dashboard → Plugins → Repositories** using:\n\n' +
+              f'```text\n{url}\n```\n\n' +
+              'Existing plugin settings and external yt-dlp wrappers are preserved. Restart Jellyfin after updating.\n'
+          )
+          PY
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
-          name: Release ${{ github.ref_name }}
-          body: |
-            See [CHANGELOG](https://github.com/robadieNZ/Trailers4Jellyfin/blob/main/build.yaml) for details.
-
-            **To install:** Add `https://raw.githubusercontent.com/robadieNZ/Trailers4Jellyfin/main/manifest.json`
-            as a plugin repository in Jellyfin → Admin → Plugins → Repositories.
+          tag_name: v${{ steps.version.outputs.VERSION }}
+          target_commitish: ${{ github.sha }}
+          name: Trailers4Jellyfin ${{ steps.version.outputs.VERSION }}
+          body_path: release-notes.md
           files: trailers4jellyfin_${{ steps.version.outputs.VERSION }}.zip
+          fail_on_unmatched_files: true
+
+      - name: Publish catalog on main
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          # Only advertise the update after its ZIP has been published successfully.
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git restore manifest.json
+          git checkout -B catalog-update origin/main
+          cp "$RUNNER_TEMP/trailers4jellyfin-manifest.json" manifest.json
+          git add manifest.json
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: publish plugin catalog version ${RELEASE_VERSION}"
+            git push origin HEAD:main
+          fi
