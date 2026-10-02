@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -11,7 +12,7 @@ public sealed record TrailerCertification(
 internal sealed class TrailerMetadata
 {
     [JsonPropertyName("tmdbId")]
-    [JsonNumberHandling(JsonNumberHandling.AllowReadingFromString)]
+    [JsonConverter(typeof(TmdbIdConverter))]
     public int? TmdbId { get; set; }
 
     [JsonPropertyName("genres")]
@@ -27,4 +28,25 @@ internal sealed class TrailerMetadata
     // Metadata upgrades preserve titles, years and any fields added by other versions.
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+// An invalid movie identity must not discard otherwise usable trailer metadata.
+internal sealed class TmdbIdConverter : JsonConverter<int?>
+{
+    public override int? Read(ref Utf8JsonReader reader, System.Type type, JsonSerializerOptions options)
+    {
+        int id;
+        if (reader.TokenType == JsonTokenType.Number && reader.TryGetInt32(out id)) return id > 0 ? id : null;
+        if (reader.TokenType == JsonTokenType.String
+            && int.TryParse(reader.GetString()?.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out id))
+            return id > 0 ? id : null;
+        reader.Skip();
+        return null;
+    }
+
+    public override void Write(Utf8JsonWriter writer, int? value, JsonSerializerOptions options)
+    {
+        if (value.HasValue) writer.WriteNumberValue(value.Value);
+        else writer.WriteNullValue();
+    }
 }

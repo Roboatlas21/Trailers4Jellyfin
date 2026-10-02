@@ -1,14 +1,17 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
+using Jellyfin.Data.Enums;
 using Jellyfin.Database.Implementations.Entities;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Model.Entities;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
@@ -19,6 +22,7 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
         private readonly EpisodePrerollCoordinator _episodePrerollCoordinator;
         private readonly IUserDataManager _userDataManager;
         private readonly TrailerRatingPolicy _ratings;
+        private readonly ILibraryManager _libraryManager;
         private readonly ILogger<TrailerIntroProvider> _logger;
 
         public string Name => "Trailers4Jellyfin";
@@ -28,12 +32,14 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
             EpisodePrerollCoordinator episodePrerollCoordinator,
             IUserDataManager userDataManager,
             TrailerRatingPolicy ratings,
+            ILibraryManager libraryManager,
             ILogger<TrailerIntroProvider> logger)
         {
             _assetRegistry = assetRegistry;
             _episodePrerollCoordinator = episodePrerollCoordinator;
             _userDataManager = userDataManager;
             _ratings = ratings;
+            _libraryManager = libraryManager;
             _logger = logger;
         }
 
@@ -140,22 +146,79 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
 
             var country = _ratings.GetMetadataCountry(feature);
             var movieRating = _ratings.GetFeatureRating(feature, country);
-            var movieGenres = new HashSet<string>(
-                config.EnableGenreMatching ? feature.Genres ?? Array.Empty<string>() : Array.Empty<string>(),
-                StringComparer.OrdinalIgnoreCase);
-            var watchedIds = GetWatchedIds(trailerItems, user, config.PreferUnwatchedTrailers);
+            var featureTmdbId = ParseTmdbId(feature.GetProviderId(MetadataProvider.Tmdb));
 
-            // Read each sidecar once. Rating restrictions apply before any selection preferences.
-            return trailerItems
-                .Select(trailer => (trailer, metadata: ReadMetadata(trailer.Path)))
-                .Where(x => x.metadata != null && _ratings.IsAllowed(x.metadata, country, movieRating, user))
-                .OrderBy(x => watchedIds.Contains(x.trailer.Id))
-                .ThenByDescending(x => x.metadata!.Genres?.Count(movieGenres.Contains) ?? 0)
+            // Hard exclusions run before choosing a genre group, including all fallbacks.
+            var candidates = trailerItems.DistinctBy(t => t.Id)
+                .Select(t => (Trailer: t, Metadata: ReadMetadata(t.Path)))
+                .Where(x => x.Metadata != null && _ratings.IsAllowed(x.Metadata, country, movieRating, user))
+                .Where(x => !config.SkipCurrentMovieTrailers || featureTmdbId == null || x.Metadata!.TmdbId != featureTmdbId)
+                .Select(x => (x.Trailer, Metadata: x.Metadata!, Genres: TrailerGenres.Normalize(x.Metadata!.Genres)))
+                .ToList();
+
+            if (config.SkipWatchedMovieTrailers && candidates.Count > 0)
+            {
+                var watchedMovies = GetWatchedMovieIds(candidates.Select(x => x.Metadata.TmdbId), user);
+                candidates.RemoveAll(x => x.Metadata.TmdbId is int id && watchedMovies.Contains(id));
+            }
+            if (candidates.Count == 0) return new List<Video>();
+
+            var movieGenres = TrailerGenres.Normalize(config.EnableGenreMatching ? feature.Genres : null);
+            var scoringGenres = movieGenres;
+            var group = candidates.Where(x => x.Genres.Overlaps(movieGenres)).ToList();
+            if (group.Count == 0)
+            {
+                scoringGenres = TrailerGenres.GetRelated(movieGenres);
+                group = candidates.Where(x => x.Genres.Overlaps(scoringGenres)).ToList();
+            }
+            if (group.Count == 0)
+            {
+                group = candidates;
+                scoringGenres = new HashSet<string>();
+            }
+
+            // Group membership is independent of history. Fill only within this group.
+            var history = config.PreferUnwatchedTrailers
+                ? _userDataManager.GetUserDataBatch(group.Select(x => x.Trailer).ToArray(), user)
+                : new Dictionary<Guid, UserItemData>();
+            return group.Select(x =>
+                {
+                    history.TryGetValue(x.Trailer.Id, out var data);
+                    return (x.Trailer, Score: x.Genres.Count(scoringGenres.Contains),
+                        Played: data?.Played == true, LastPlayed: data?.LastPlayedDate ?? DateTime.MinValue);
+                })
+                .OrderBy(x => x.Played)
+                .ThenByDescending(x => x.Played ? 0 : x.Score)
+                .ThenBy(x => x.Played ? x.LastPlayed : DateTime.MinValue)
                 .ThenBy(_ => Random.Shared.Next())
                 .Take(config.NumberOfTrailers)
-                .Select(x => x.trailer)
+                .Select(x => x.Trailer)
                 .ToList();
         }
+
+        private HashSet<int> GetWatchedMovieIds(IEnumerable<int?> trailerMovieIds, User user)
+        {
+            var ids = trailerMovieIds.Where(id => id is > 0).Select(id => id!.Value).ToHashSet();
+            if (ids.Count == 0) return new HashSet<int>();
+            var movies = _libraryManager.GetItemList(new InternalItemsQuery(user)
+                {
+                    IncludeItemTypes = new[] { BaseItemKind.Movie },
+                    Recursive = true,
+                    GroupByPresentationUniqueKey = false,
+                    EnableGroupByMetadataKey = false,
+                })
+                .OfType<Movie>()
+                .Where(m => ParseTmdbId(m.GetProviderId(MetadataProvider.Tmdb)) is int id && ids.Contains(id))
+                .ToArray();
+            if (movies.Length == 0) return new HashSet<int>();
+            var history = _userDataManager.GetUserDataBatch(movies, user);
+            return movies.Where(m => history.TryGetValue(m.Id, out var data) && data.Played)
+                .Select(m => ParseTmdbId(m.GetProviderId(MetadataProvider.Tmdb))!.Value)
+                .ToHashSet();
+        }
+
+        private static int? ParseTmdbId(string? value) =>
+            int.TryParse(value?.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var id) && id > 0 ? id : null;
 
         internal IReadOnlyList<Video> GetPreferredClips(IReadOnlyList<Video> items, User user, bool preferUnwatched)
         {
@@ -206,6 +269,5 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
 
             intros.Add(ToIntroInfo(items[Random.Shared.Next(items.Count)]));
         }
-
     }
 }

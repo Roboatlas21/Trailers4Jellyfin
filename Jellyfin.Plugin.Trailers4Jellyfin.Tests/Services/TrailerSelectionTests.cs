@@ -14,11 +14,12 @@ using Xunit;
 
 namespace Jellyfin.Plugin.Trailers4Jellyfin.Tests.Services;
 
-public sealed class TrailerSelectionTests : IDisposable
+public sealed partial class TrailerSelectionTests : IDisposable
 {
     private readonly string _directory = Path.Combine(Path.GetTempPath(), "t4j-metadata-" + Guid.NewGuid());
     private readonly TrailerIntroProvider _provider;
     private readonly UserDataProxy _history;
+    private readonly SelectionLibraryProxy _library;
     private readonly User _user = new("viewer", "auth", "reset");
     private readonly PluginConfiguration _config = new() { NumberOfTrailers = 2 };
     public TrailerSelectionTests()
@@ -26,7 +27,9 @@ public sealed class TrailerSelectionTests : IDisposable
         Directory.CreateDirectory(_directory);
         var manager = DispatchProxy.Create<IUserDataManager, UserDataProxy>();
         _history = (UserDataProxy)(object)manager;
-        _provider = new(null!, null!, manager, TrailerRatingPolicyTests.CreatePolicy(), NullLogger<TrailerIntroProvider>.Instance);
+        var library = DispatchProxy.Create<ILibraryManager, SelectionLibraryProxy>();
+        _library = (SelectionLibraryProxy)(object)library;
+        _provider = new(null!, null!, manager, TrailerRatingPolicyTests.CreatePolicy(), library, NullLogger<TrailerIntroProvider>.Instance);
     }
 
     [Theory]
@@ -54,13 +57,13 @@ public sealed class TrailerSelectionTests : IDisposable
     }
 
     [Fact]
-    public void TooFewGenreMatches_FillsFromRemainingAppropriateTrailers()
+    public void TooFewGenreMatches_PlaysFewerInsteadOfFillingFromOtherGroups()
     {
         var match = Trailer("match", "{\"genres\":[\"Comedy\"],\"officialRating\":\"PG\"}");
         var unknown = Trailer("unknown", null);
         var feature = new Movie { OfficialRating = "PG", Genres = new[] { "Comedy" } };
         var result = _provider.SelectTrailers(feature, new[] { unknown, match }, _config, _user);
-        Assert.Equal(new[] { match.Id, unknown.Id }, result.Select(v => v.Id));
+        Assert.Equal(match.Id, Assert.Single(result).Id);
     }
 
     [Fact]
@@ -100,7 +103,7 @@ public sealed class TrailerSelectionTests : IDisposable
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void TrailerPreference_PrioritizesUnwatchedWithoutBypassingRating(bool enabled)
+    public void TrailerPreference_DoesNotBypassRatingsOrLeaveDirectGroup(bool enabled)
     {
         _config.NumberOfTrailers = 1;
         _config.PreferUnwatchedTrailers = enabled;
@@ -110,15 +113,15 @@ public sealed class TrailerSelectionTests : IDisposable
         _history.Watched.Add((_user.Id, watchedMatch.Id));
         var feature = new Movie { OfficialRating = "PG", Genres = new[] { "Comedy" } };
         var result = _provider.SelectTrailers(feature, new[] { adult, watchedMatch, unwatchedOther }, _config, _user);
-        Assert.Equal(enabled ? unwatchedOther.Id : watchedMatch.Id, Assert.Single(result).Id);
+        Assert.Equal(watchedMatch.Id, Assert.Single(result).Id);
     }
 
     [Fact]
-    public void TrailerPreference_FillsCountAndRemainsPerUser()
+    public void TrailerPreference_OrdersWithinGroupAndRemainsPerUser()
     {
         _config.PreferUnwatchedTrailers = true;
         var match = Trailer("match", "{\"genres\":[\"Comedy\"],\"officialRating\":\"PG\"}");
-        var other = Trailer("other", null);
+        var other = Trailer("other", "{\"genres\":[\"Comedy\"]}");
         _history.Watched.Add((_user.Id, match.Id));
         var feature = new Movie { OfficialRating = "PG", Genres = new[] { "Comedy" } };
         var items = new[] { match, other };
@@ -127,7 +130,8 @@ public sealed class TrailerSelectionTests : IDisposable
 
         var otherUser = new User(_user.Username, "auth", "reset");
         result = _provider.SelectTrailers(feature, items, _config, otherUser);
-        Assert.Equal(new[] { match.Id, other.Id }, result.Select(item => item.Id));
+        Assert.Equal(2, result.Count);
+        Assert.Equal(2, result.Select(item => item.Id).Distinct().Count());
     }
 
     [Fact]
@@ -159,6 +163,7 @@ public sealed class TrailerSelectionTests : IDisposable
 public class UserDataProxy : DispatchProxy
 {
     public HashSet<(Guid UserId, Guid ItemId)> Watched { get; } = new();
+    public Dictionary<(Guid UserId, Guid ItemId), DateTime?> Dates { get; } = new();
     public int Lookups { get; private set; }
 
     protected override object? Invoke(MethodInfo? method, object?[]? args)
@@ -169,6 +174,6 @@ public class UserDataProxy : DispatchProxy
         var items = (IReadOnlyList<BaseItem>)args![0]!;
         var user = (User)args[1]!;
         return items.Where(item => Watched.Contains((user.Id, item.Id)))
-            .ToDictionary(item => item.Id, item => new UserItemData { Key = item.Id.ToString(), Played = true });
+            .ToDictionary(item => item.Id, item => new UserItemData { Key = item.Id.ToString(), Played = true, LastPlayedDate = Dates.GetValueOrDefault((user.Id, item.Id)) });
     }
 }

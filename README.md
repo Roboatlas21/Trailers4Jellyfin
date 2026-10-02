@@ -90,12 +90,50 @@ Use **Browse** beside any folder field to select a folder on the Jellyfin server
 | **Enable Cinema Mode** | Registers Trailers4Jellyfin as a Jellyfin intro provider |
 | **Trailer Pre-Roll Folder** | Optional folder; one random video plays before trailers |
 | **Trailers per movie** | Number of downloaded trailers to play; 0 disables the trailer block |
-| **Match trailers to movie genre** | Prefers trailers whose stored TMDB genres match the feature |
+| **Match trailers to movie genre** | Direct matches, then related matches, then general fallback; default on |
+| **Skip trailers for movies this user has already watched** | Excludes a trailer if any matching TMDB movie copy is watched by this user; default on |
+| **Skip trailers for the movie being played** | Excludes all trailers advertising the current TMDB movie; default on |
 | **Feature Pre-Roll Folder** | Optional folder; one random video plays after trailers and before the movie |
 
 Each clip type has its own **Prefer unwatched** checkbox: trailer pre-rolls, trailers, feature pre-rolls, and episode pre-rolls. All four default to off. When enabled, the plugin prefers clips Jellyfin has not marked watched for the current user's ID; each user's history is independent, and no visible media library is required.
 
-Pre-rolls are chosen randomly from the unwatched clips, falling back to the full pool once all are watched. Trailers prioritize unwatched status before genre matching and can use watched trailers to fill the requested count. Parental-rating filtering and episode frequency limits still apply. Selection does not mark a clip watched or reset watched history; Jellyfin's playback tracking determines that status.
+Pre-rolls are chosen randomly from the unwatched clips, falling back to the full pool once all are watched. Their selection behavior and episode frequency limits are unchanged. Selection does not mark a clip watched or reset watched history; Jellyfin's playback tracking determines that status.
+
+### Downloaded trailer selection
+
+1. Apply parental-rating restrictions, then both optional movie exclusions. Match movies only by reliable TMDB IDs; absent or unmatched movies remain eligible. One watched matching library copy excludes the trailer for that user. These are firm selection exclusions, never reversed by a fallback and never deleting files. The separate **Skip movies already in library** download option is unchanged.
+2. Choose the first nonempty group: direct genre matches, related genre matches, then all remaining eligible trailers. A watched direct match still wins over an unwatched related or unrelated trailer. With genre matching off (or no usable movie genres), use the general group.
+3. Score direct matches by distinct genres shared with the feature. Score related matches by distinct genres shared with the combined related-genre list. General matches have equal score. Genre comparisons ignore case; duplicates never increase scores.
+4. With **Prefer unwatched trailers** on, take unwatched trailers in descending score order, then watched trailers by oldest last-played time, ignoring their scores. A watched trailer with no date is oldest. With the preference off, ignore trailer history and use descending score for every slot. Randomize equal scores/dates.
+5. Fill only from the chosen group, without duplicate clip IDs. If it contains fewer clips than requested, play fewer; never move to another group just to fill the count.
+
+The trailer's own Jellyfin watched flag and last-played date belong to the current user. Missing watched records are unwatched, and queuing does not record a watch. Full movie history is used only by the watched-movie exclusion.
+
+Related genres are directional and expanded once, with equal weight. Combine the rows for all movie genres and remove duplicates; never follow a related genre into its own row.
+
+| Movie genre | Related trailer genres |
+|---|---|
+| Action | Adventure, Thriller |
+| Adventure | Action, Fantasy, Science Fiction |
+| Animation | Use the movie's other genres |
+| Comedy | Romance, Drama |
+| Crime | Thriller, Mystery |
+| Documentary | Use the movie's other genres |
+| Drama | Romance, History |
+| Family | Animation, Adventure, Fantasy |
+| Fantasy | Adventure, Science Fiction |
+| History | War, Drama, Documentary |
+| Horror | Thriller, Mystery |
+| Music | Use the movie's other genres |
+| Mystery | Thriller, Crime |
+| Romance | Comedy, Drama |
+| Science Fiction | Adventure, Fantasy, Action |
+| TV Movie | Use the movie's other genres |
+| Thriller | Mystery, Crime, Action |
+| War | History, Action, Drama |
+| Western | Adventure, Action, Drama |
+
+Animation, Documentary, Music and TV Movie add no related genres themselves. They still count as direct matches; their other movie genres supply related matches. Animation does not automatically imply Family.
 
 Example:
 

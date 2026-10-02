@@ -40,6 +40,8 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Configuration
         public int NumberOfTrailers { get; set; } = 2;
         public bool PreferUnwatchedTrailers { get; set; } = false;
         public bool EnableGenreMatching { get; set; } = true;
+        public bool SkipWatchedMovieTrailers { get; set; } = true;
+        public bool SkipCurrentMovieTrailers { get; set; } = true;
         public string FeaturePreRollFolder { get; set; } = string.Empty;
         public bool PreferUnwatchedFeaturePreRolls { get; set; } = false;
         public string EpisodePreRollFolder { get; set; } = string.Empty;

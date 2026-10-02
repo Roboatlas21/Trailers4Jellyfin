@@ -54,7 +54,7 @@
                         <p class="fieldDescription">
                             Each <strong>Prefer unwatched</strong> option uses the current Jellyfin user's watched status.
                             Watched clips remain available when no unwatched clips remain, or to fill the requested trailer count.
-                            For trailers, unwatched status takes priority over genre matching; parental-rating filtering still applies.
+                            For trailers, genre groups are chosen first. Within that group, prefer unwatched trailers, then replay the oldest-watched.
                         </p>
 
                         <p class="fieldDescription">
@@ -113,9 +113,30 @@
                                 <span>Match trailers to movie genre</span>
                             </label>
                             <div class="fieldDescription checkboxFieldDescription">
-                                Prefer trailers whose genre overlaps with the movie you're about to watch
-                                (e.g. horror trailers before horror films, family trailers before animated movies).
-                                Falls back to random trailers if not enough genre matches are found.
+                                Use direct genre matches first, related genres only when no direct matches exist,
+                                then general fallback when neither exists. Play fewer trailers if the chosen group
+                                cannot fill the requested count.
+                            </div>
+                        </div>
+
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="skip-watched-movie-trailers" />
+                                <span>Skip trailers for movies this user has already watched</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Exclude trailers when a matching library movie is watched by this user. Matches use TMDB IDs.
+                                This does not delete files and is independent of the download filter for movies in your library.
+                            </div>
+                        </div>
+
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="skip-current-movie-trailers" />
+                                <span>Skip trailers for the movie being played</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Exclude every trailer with the same TMDB movie ID as the movie you are about to watch.
                             </div>
                         </div>
 
@@ -461,6 +482,8 @@
                     document.getElementById('trailer-preroll-folder').value  = config.TrailerPreRollFolder || '';
                     document.getElementById('num-trailers').value           = config.NumberOfTrailers ?? 2;
                     document.getElementById('enable-genre-matching').checked = config.EnableGenreMatching !== false;
+                    document.getElementById('skip-watched-movie-trailers').checked = config.SkipWatchedMovieTrailers !== false;
+                    document.getElementById('skip-current-movie-trailers').checked = config.SkipCurrentMovieTrailers !== false;
                     document.getElementById('feature-preroll-folder').value  = config.FeaturePreRollFolder || '';
                     document.getElementById('episode-preroll-folder').value  = config.EpisodePreRollFolder || '';
                     document.getElementById('episode-preroll-chance').value = config.EpisodePreRollChancePercent ?? 75;
@@ -506,6 +529,8 @@
                     var numTrailers               = parseInt(document.getElementById('num-trailers').value, 10);
                     config.NumberOfTrailers       = Number.isNaN(numTrailers) ? 2 : Math.max(0, numTrailers);
                     config.EnableGenreMatching    = document.getElementById('enable-genre-matching').checked;
+                    config.SkipWatchedMovieTrailers = document.getElementById('skip-watched-movie-trailers').checked;
+                    config.SkipCurrentMovieTrailers = document.getElementById('skip-current-movie-trailers').checked;
                     config.FeaturePreRollFolder   = document.getElementById('feature-preroll-folder').value;
                     config.EpisodePreRollFolder   = document.getElementById('episode-preroll-folder').value;
                     config.EpisodePreRollChancePercent = readNumber('episode-preroll-chance', 75);
