@@ -20,9 +20,18 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
         private readonly string _path;
 
         public EpisodePrerollStateStore(ILogger<EpisodePrerollStateStore> logger)
+            : this(
+                Path.Combine(Plugin.Instance.DataFolderPath, "episode-preroll-history.json"),
+                logger)
         {
+        }
+
+        internal EpisodePrerollStateStore(
+            string path,
+            ILogger<EpisodePrerollStateStore> logger)
+        {
+            _path = path;
             _logger = logger;
-            _path = Path.Combine(Plugin.Instance.DataFolderPath, "episode-preroll-history.json");
         }
 
         public async Task<EpisodePrerollUserState> LoadUserAsync(

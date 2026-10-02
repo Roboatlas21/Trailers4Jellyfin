@@ -19,9 +19,18 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
+      - name: Test
+        run: |
+          dotnet test \
+            Jellyfin.Plugin.Trailers4Jellyfin.Tests/Jellyfin.Plugin.Trailers4Jellyfin.Tests.csproj \
+            --configuration Release
+
       - name: Build
         run: |
-          dotnet publish             Jellyfin.Plugin.Trailers4Jellyfin/Jellyfin.Plugin.Trailers4Jellyfin.csproj             --configuration Release             --output bin
+          dotnet publish \
+            Jellyfin.Plugin.Trailers4Jellyfin/Jellyfin.Plugin.Trailers4Jellyfin.csproj \
+            --configuration Release \
+            --output bin
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
