@@ -2,20 +2,30 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using Jellyfin.Database.Implementations.Entities;
+using Jellyfin.Plugin.Trailers4Jellyfin.Configuration;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
 {
+    public sealed record CinemaAssetSet(
+        IReadOnlyList<Video> TrailerPreRolls,
+        IReadOnlyList<Video> DownloadedTrailers,
+        IReadOnlyList<Video> FeaturePreRolls);
+
     /// <summary>
-    /// Registers downloaded trailers as private, unparented Jellyfin items.
-    /// This follows the Local Intros Extended architecture: the plugin owns
-    /// stable ItemIds without putting helper media in a normal user library.
+    /// Registers Cinema Mode files as private Jellyfin items instead of requiring
+    /// user-visible helper libraries. This follows the same architecture used by
+    /// Local Intros Extended: unparented Video rows are tagged with a provider ID,
+    /// reused on later scans, and returned to Jellyfin by ItemId.
     /// </summary>
     public sealed class CinemaAssetRegistry
     {
         private const string DownloadedTrailerProviderKey = "trailers4jellyfin.trailer";
+        private const string TrailerPreRollProviderKey = "trailers4jellyfin.trailer-preroll";
+        private const string FeaturePreRollProviderKey = "trailers4jellyfin.feature-preroll";
 
         private static readonly HashSet<string> VideoExtensions = new(StringComparer.OrdinalIgnoreCase)
         {
@@ -38,29 +48,44 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
             _logger = logger;
         }
 
+        public CinemaAssetSet SyncConfiguredAssets(PluginConfiguration config)
+        {
+            lock (_syncLock)
+            {
+                return new CinemaAssetSet(
+                    SyncFolder(config.TrailerPreRollFolder, TrailerPreRollProviderKey, "trailer pre-roll"),
+                    SyncFolder(config.DownloadFolder, DownloadedTrailerProviderKey, "downloaded trailer"),
+                    SyncFolder(config.FeaturePreRollFolder, FeaturePreRollProviderKey, "feature pre-roll"));
+            }
+        }
+
         public IReadOnlyList<Video> SyncDownloadedTrailers(string folder)
         {
             lock (_syncLock)
             {
-                return SyncFolder(folder);
+                return SyncFolder(folder, DownloadedTrailerProviderKey, "downloaded trailer");
             }
         }
 
-        private IReadOnlyList<Video> SyncFolder(string? folder)
+        private IReadOnlyList<Video> SyncFolder(
+            string? folder,
+            string providerKey,
+            string label)
         {
-            var registered = GetRegistered();
+            var registered = GetRegistered(providerKey);
 
             if (string.IsNullOrWhiteSpace(folder))
             {
                 foreach (var item in registered)
-                    Delete(item);
+                    Delete(item, label);
                 return Array.Empty<Video>();
             }
 
             if (!Directory.Exists(folder))
             {
                 _logger.LogWarning(
-                    "|Trailers4Jellyfin| Configured downloaded trailer folder does not exist: {Folder}",
+                    "|Trailers4Jellyfin| Configured {Label} folder does not exist: {Folder}",
+                    label,
                     folder);
                 return Array.Empty<Video>();
             }
@@ -93,14 +118,15 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
                     Name = Path.GetFileNameWithoutExtension(file),
                     ProviderIds = new Dictionary<string, string>
                     {
-                        { DownloadedTrailerProviderKey, file },
+                        { providerKey, file },
                     },
                 };
 
                 _libraryManager.CreateItem(item, null);
                 active.Add(item);
                 _logger.LogInformation(
-                    "|Trailers4Jellyfin| Registered private downloaded trailer: {Path}",
+                    "|Trailers4Jellyfin| Registered private {Label}: {Path}",
+                    label,
                     file);
             }
 
@@ -110,21 +136,21 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
                 if (string.IsNullOrWhiteSpace(path)
                     || !files.Contains(Path.GetFullPath(path)))
                 {
-                    Delete(item);
+                    Delete(item, label);
                 }
             }
 
             return active;
         }
 
-        private List<Video> GetRegistered()
+        private List<Video> GetRegistered(string providerKey)
         {
             return _libraryManager
                 .GetItemsResult(new InternalItemsQuery
                 {
                     HasAnyProviderId = new Dictionary<string, string>
                     {
-                        { DownloadedTrailerProviderKey, string.Empty },
+                        { providerKey, string.Empty },
                     },
                 })
                 .Items
@@ -142,11 +168,15 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
             return VideoExtensions.Contains(Path.GetExtension(path));
         }
 
-        private void Delete(Video item)
+        private void Delete(Video item, string label)
         {
             var path = item.Path;
             try
             {
+                // Jellyfin treats unparented items as internal and may delete their
+                // backing path even when DeleteFileLocation is false. Clear Path on
+                // the in-memory item first so removing a private registration can
+                // never remove the user's actual preroll/trailer file.
                 item.Path = null;
                 _libraryManager.DeleteItem(
                     item,
@@ -156,14 +186,16 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
                         DeleteFromExternalProvider = false,
                     });
                 _logger.LogInformation(
-                    "|Trailers4Jellyfin| Removed private downloaded trailer registration: {Path}",
+                    "|Trailers4Jellyfin| Removed private {Label} registration: {Path}",
+                    label,
                     path);
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(
                     ex,
-                    "|Trailers4Jellyfin| Could not remove private downloaded trailer registration: {Path}",
+                    "|Trailers4Jellyfin| Could not remove private {Label} registration: {Path}",
+                    label,
                     path);
             }
             finally

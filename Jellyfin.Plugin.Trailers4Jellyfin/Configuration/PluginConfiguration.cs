@@ -35,8 +35,10 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Configuration
         // ── Cinema Mode ───────────────────────────────────────────────────────
 
         public bool EnableCinemaMode { get; set; } = true;
+        public string TrailerPreRollFolder { get; set; } = string.Empty;
         public int NumberOfTrailers { get; set; } = 2;
         public bool EnableGenreMatching { get; set; } = true;
+        public string FeaturePreRollFolder { get; set; } = string.Empty;
 
         // ── Languages ─────────────────────────────────────────────────────────
 

@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using Jellyfin.Database.Implementations.Entities;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Library;
 using Microsoft.Extensions.Logging;
 
@@ -44,45 +45,68 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
         private Task<IEnumerable<IntroInfo>> GetIntrosInternal(BaseItem item)
         {
             var config = Plugin.Instance?.Configuration;
-            if (config == null || !config.EnableCinemaMode || config.NumberOfTrailers <= 0)
+            if (config == null || !config.EnableCinemaMode)
                 return Task.FromResult(Enumerable.Empty<IntroInfo>());
 
-            if (string.IsNullOrWhiteSpace(config.DownloadFolder))
+            if (item is not Movie)
                 return Task.FromResult(Enumerable.Empty<IntroInfo>());
 
-            if (item is not MediaBrowser.Controller.Entities.Movies.Movie)
-                return Task.FromResult(Enumerable.Empty<IntroInfo>());
+            var assets = _assetRegistry.SyncConfiguredAssets(config);
+            var intros = new List<IntroInfo>();
 
-            var trailerItems = _assetRegistry
-                .SyncDownloadedTrailers(config.DownloadFolder)
-                .ToList();
+            AddRandom(intros, assets.TrailerPreRolls);
 
-            if (trailerItems.Count == 0)
+            var trailerItems = assets.DownloadedTrailers.ToList();
+            var selected = SelectTrailers(item, trailerItems, config);
+            intros.AddRange(selected.Select(ToIntroInfo));
+
+            AddRandom(intros, assets.FeaturePreRolls);
+
+            _logger.LogInformation(
+                "|Trailers4Jellyfin| Queuing {Count} Cinema Mode item(s) before '{Movie}' " +
+                "({TrailerPreRolls} trailer pre-roll, {Trailers} trailer(s), {FeaturePreRolls} feature pre-roll)",
+                intros.Count,
+                item.Name,
+                intros.Count > 0 && assets.TrailerPreRolls.Count > 0 ? 1 : 0,
+                selected.Count,
+                intros.Count > selected.Count && assets.FeaturePreRolls.Count > 0 ? 1 : 0);
+
+            return Task.FromResult<IEnumerable<IntroInfo>>(intros);
+        }
+
+        private List<Video> SelectTrailers(
+            BaseItem feature,
+            List<Video> trailerItems,
+            Configuration.PluginConfiguration config)
+        {
+            if (config.NumberOfTrailers <= 0 || trailerItems.Count == 0)
+                return new List<Video>();
+
+            if (!string.IsNullOrWhiteSpace(feature.OfficialRating)
+                && RatingSeverity.TryGetValue(feature.OfficialRating, out var movieSeverity))
             {
-                _logger.LogDebug(
-                    "|Trailers4Jellyfin| No downloaded trailer files found under '{Folder}'",
-                    config.DownloadFolder);
-                return Task.FromResult(Enumerable.Empty<IntroInfo>());
-            }
+                var filtered = trailerItems
+                    .Where(t => IsRatingAppropriate(t, movieSeverity))
+                    .ToList();
 
-            if (!string.IsNullOrWhiteSpace(item.OfficialRating)
-                && RatingSeverity.TryGetValue(item.OfficialRating, out var movieSeverity))
-            {
-                var filtered = trailerItems.Where(t => IsRatingAppropriate(t, movieSeverity)).ToList();
                 if (filtered.Count > 0)
+                {
                     trailerItems = filtered;
+                }
                 else
+                {
                     _logger.LogDebug(
                         "|Trailers4Jellyfin| No trailers at or below rating '{Rating}' for '{Movie}', skipping rating filter",
-                        item.OfficialRating,
-                        item.Name);
+                        feature.OfficialRating,
+                        feature.Name);
+                }
             }
 
-            List<Video> selected;
-
-            if (config.EnableGenreMatching && item.Genres != null && item.Genres.Length > 0)
+            if (config.EnableGenreMatching && feature.Genres != null && feature.Genres.Length > 0)
             {
-                var movieGenres = new HashSet<string>(item.Genres, StringComparer.OrdinalIgnoreCase);
+                var movieGenres = new HashSet<string>(
+                    feature.Genres,
+                    StringComparer.OrdinalIgnoreCase);
 
                 var scored = trailerItems
                     .Select(t => (trailer: t, score: GetGenreScore(t.Path!, movieGenres)))
@@ -91,28 +115,18 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
                 var matched = scored.Where(x => x.score > 0).ToList();
                 var pool = matched.Count >= config.NumberOfTrailers ? matched : scored;
 
-                selected = pool
+                return pool
                     .OrderByDescending(x => x.score)
                     .ThenBy(_ => Guid.NewGuid())
                     .Take(config.NumberOfTrailers)
                     .Select(x => x.trailer)
                     .ToList();
             }
-            else
-            {
-                selected = trailerItems
-                    .OrderBy(_ => Guid.NewGuid())
-                    .Take(config.NumberOfTrailers)
-                    .ToList();
-            }
 
-            _logger.LogInformation(
-                "|Trailers4Jellyfin| Queuing {Count} intro trailer(s) before '{Movie}'",
-                selected.Count,
-                item.Name);
-
-            return Task.FromResult<IEnumerable<IntroInfo>>(
-                selected.Select(t => new IntroInfo { ItemId = t.Id, Path = t.Path }));
+            return trailerItems
+                .OrderBy(_ => Guid.NewGuid())
+                .Take(config.NumberOfTrailers)
+                .ToList();
         }
 
         private static readonly Dictionary<string, int> RatingSeverity =
@@ -154,6 +168,17 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
             {
                 return 0;
             }
+        }
+
+        private static IntroInfo ToIntroInfo(Video item) =>
+            new() { ItemId = item.Id, Path = item.Path };
+
+        private static void AddRandom(List<IntroInfo> intros, IReadOnlyList<Video> items)
+        {
+            if (items.Count == 0)
+                return;
+
+            intros.Add(ToIntroInfo(items[Random.Shared.Next(items.Count)]));
         }
     }
 }

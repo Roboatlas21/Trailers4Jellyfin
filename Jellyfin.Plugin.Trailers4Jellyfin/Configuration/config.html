@@ -44,11 +44,12 @@
                     <fieldset class="verticalSection verticalSection-extrabottompadding">
                         <legend><h3 class="sectionTitle">Cinema Mode</h3></legend>
                         <p class="fieldDescription">
-                            When enabled, this plugin privately registers downloaded trailers with Jellyfin.
-                            The <em>Download Folder</em> below does not need to be added as a Jellyfin library,
-                            so trailers stay out of navigation and Recently Added.<br />
-                            Enable <strong>Cinema Mode</strong> in each user's Jellyfin playback settings
-                            (User settings → Playback → Cinema mode → On).
+                            When enabled, this plugin privately registers Cinema Mode assets with Jellyfin.
+                            The folders below do <strong>not</strong> need to be added as Jellyfin libraries,
+                            so they stay out of navigation and Recently Added.<br /><br />
+                            Playback order: <strong>Trailer Pre-Roll → Trailer(s) → Feature Pre-Roll → Movie</strong>.<br />
+                            Leave either pre-roll folder blank to skip that stage. Users still need Cinema Mode
+                            enabled in their client playback settings.
                         </p>
 
                         <div class="checkboxContainer checkboxContainer-withDescription">
@@ -62,10 +63,18 @@
                         </div>
 
                         <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="num-trailers">Trailers per movie</label>
-                            <input type="number" id="num-trailers" is="emby-input" min="1" max="10" />
+                            <label class="inputLabel inputLabelUnfocused" for="trailer-preroll-folder">Trailer Pre-Roll Folder</label>
+                            <input type="text" id="trailer-preroll-folder" is="emby-input" placeholder="/media/trailer-prerolls" />
                             <div class="fieldDescription">
-                                How many trailers to play before each movie starts. Default: 2.
+                                Optional folder of bumpers to play before the trailer block. One video is chosen at random.
+                            </div>
+                        </div>
+
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="num-trailers">Trailers per movie</label>
+                            <input type="number" id="num-trailers" is="emby-input" min="0" max="10" />
+                            <div class="fieldDescription">
+                                How many downloaded trailers to play. Set to 0 to disable the trailer block. Default: 2.
                             </div>
                         </div>
 
@@ -78,6 +87,15 @@
                                 Prefer trailers whose genre overlaps with the movie you're about to watch
                                 (e.g. horror trailers before horror films, family trailers before animated movies).
                                 Falls back to random trailers if not enough genre matches are found.
+                            </div>
+                        </div>
+
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="feature-preroll-folder">Feature Pre-Roll Folder</label>
+                            <input type="text" id="feature-preroll-folder" is="emby-input" placeholder="/media/feature-prerolls" />
+                            <div class="fieldDescription">
+                                Optional folder of bumpers to play after the trailers and immediately before the movie.
+                                One video is chosen at random.
                             </div>
                         </div>
                     </fieldset>
@@ -323,8 +341,10 @@
                 ApiClient.getPluginConfiguration(pluginId).then(function (config) {
                     document.getElementById('tmdb-api-key').value           = config.TmdbApiKey || '';
                     document.getElementById('enable-cinema-mode').checked   = config.EnableCinemaMode !== false;
+                    document.getElementById('trailer-preroll-folder').value  = config.TrailerPreRollFolder || '';
                     document.getElementById('num-trailers').value           = config.NumberOfTrailers ?? 2;
                     document.getElementById('enable-genre-matching').checked = config.EnableGenreMatching !== false;
+                    document.getElementById('feature-preroll-folder').value  = config.FeaturePreRollFolder || '';
                     document.getElementById('source-now-playing').checked   = config.SourceNowPlaying !== false;
                     document.getElementById('source-upcoming').checked      = config.SourceUpcoming !== false;
                     document.getElementById('source-popular').checked       = !!config.SourcePopular;
@@ -355,8 +375,11 @@
                 ApiClient.getPluginConfiguration(pluginId).then(function (config) {
                     config.TmdbApiKey             = document.getElementById('tmdb-api-key').value;
                     config.EnableCinemaMode       = document.getElementById('enable-cinema-mode').checked;
-                    config.NumberOfTrailers       = parseInt(document.getElementById('num-trailers').value, 10) || 2;
+                    config.TrailerPreRollFolder   = document.getElementById('trailer-preroll-folder').value;
+                    var numTrailers               = parseInt(document.getElementById('num-trailers').value, 10);
+                    config.NumberOfTrailers       = Number.isNaN(numTrailers) ? 2 : Math.max(0, numTrailers);
                     config.EnableGenreMatching    = document.getElementById('enable-genre-matching').checked;
+                    config.FeaturePreRollFolder   = document.getElementById('feature-preroll-folder').value;
                     config.SourceNowPlaying       = document.getElementById('source-now-playing').checked;
                     config.SourceUpcoming         = document.getElementById('source-upcoming').checked;
                     config.SourcePopular          = document.getElementById('source-popular').checked;
