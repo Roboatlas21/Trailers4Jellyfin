@@ -176,6 +176,7 @@ These are best-effort frequency controls for occasional commercials. Duplicate p
 | **TMDB API Key** | TMDB v3 API key or read-access token |
 | **Download Folder** | Where downloaded trailers and metadata sidecars are stored |
 | **Max trailers per run** | Maximum new trailers to download in one task run |
+| **Minimum movie budget (USD)** | Skip downloads for movies with known TMDB budgets below this amount; default $10,000,000. Missing or zero budgets and failed budget lookups are allowed. Set to 0 to disable. Existing trailer files are kept. |
 | **Preferred video quality** | 480p/720p built-in or higher quality with yt-dlp |
 | **Skip movies already in my Jellyfin library** | Avoid downloading trailers for movies you already own |
 | **Skip trailers already downloaded** | Reuse existing trailer files |

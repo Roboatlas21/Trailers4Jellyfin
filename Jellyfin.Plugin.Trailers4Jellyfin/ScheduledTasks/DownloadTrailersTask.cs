@@ -171,6 +171,13 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
                     continue;
                 }
 
+                if (!await _tmdbService.MeetsMinimumBudgetAsync(
+                    movie.Id.ToString(), config.TmdbApiKey, config.MinimumMovieBudget, cancellationToken).ConfigureAwait(false))
+                {
+                    _logger.LogInformation("|Trailers4Jellyfin| Skipping '{Title}': movie budget is below {Minimum} USD", movie.Title, config.MinimumMovieBudget);
+                    continue;
+                }
+
                 var trailers = await _tmdbService.GetTrailersAsync(
                     movie.Id.ToString(), config.TmdbApiKey, allowedLanguages, cancellationToken).ConfigureAwait(false);
 

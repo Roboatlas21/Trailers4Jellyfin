@@ -24,6 +24,8 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Configuration
         public string DownloadFolder { get; set; } = string.Empty;
         public int MaxTrailersToDownload { get; set; } = 20;
         public int MaxPagesPerSource { get; set; } = 3;
+        /// <summary>Minimum known movie budget in USD. 0 disables filtering; unknown budgets are allowed.</summary>
+        public long MinimumMovieBudget { get; set; } = 10_000_000;
         public int PreferredVideoHeight { get; set; } = 720;
         public bool SkipAlreadyDownloaded { get; set; } = true;
         public bool SkipMoviesInLibrary { get; set; } = true;

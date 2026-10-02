@@ -8,6 +8,19 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Tests.Services;
 public sealed class ConfigurationDefaultsTests
 {
     [Theory]
+    [InlineData("", 10_000_000L)]
+    [InlineData("0", 0L)]
+    [InlineData("5000000", 5_000_000L)]
+    public void MinimumBudget_PreservesSavedValuesAndDefaultsOlderConfigurations(string saved, long expected)
+    {
+        var field = saved.Length == 0 ? "" : $"<MinimumMovieBudget>{saved}</MinimumMovieBudget>";
+        using var reader = new StringReader($"<PluginConfiguration>{field}</PluginConfiguration>");
+        var serializer = new XmlSerializer(typeof(PluginConfiguration));
+        var config = (PluginConfiguration)serializer.Deserialize(reader)!;
+        Assert.Equal(expected, config.MinimumMovieBudget);
+    }
+
+    [Theory]
     [InlineData("", true)]
     [InlineData("false", false)]
     [InlineData("true", true)]

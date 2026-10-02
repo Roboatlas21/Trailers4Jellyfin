@@ -340,6 +340,16 @@
                             </div>
                         </div>
 
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="minimum-movie-budget">Minimum movie budget (USD)</label>
+                            <input type="number" id="minimum-movie-budget" is="emby-input" min="0" max="9007199254740991" step="1" required />
+                            <div class="fieldDescription">
+                                Skip new trailer downloads when the movie's known TMDB budget is below this amount.
+                                Missing or zero budgets are allowed. Default: $10,000,000 USD. Set to 0 to disable.
+                                Existing trailer files are kept.
+                            </div>
+                        </div>
+
                         <div class="selectContainer">
                             <label class="selectLabel" for="video-quality">Video quality</label>
                             <select is="emby-select" id="video-quality" class="emby-select-withcolor emby-select">
@@ -500,6 +510,7 @@
                     document.getElementById('download-folder').value        = config.DownloadFolder || '';
                     document.getElementById('max-trailers').value           = config.MaxTrailersToDownload ?? 20;
                     document.getElementById('max-pages').value              = config.MaxPagesPerSource ?? 3;
+                    document.getElementById('minimum-movie-budget').value   = config.MinimumMovieBudget ?? 10000000;
                     document.getElementById('video-quality').value          = String(config.PreferredVideoHeight ?? 720);
                     document.getElementById('skip-library').checked         = config.SkipMoviesInLibrary !== false;
                     document.getElementById('skip-downloaded').checked      = config.SkipAlreadyDownloaded !== false;
@@ -547,6 +558,7 @@
                     config.DownloadFolder         = document.getElementById('download-folder').value;
                     config.MaxTrailersToDownload  = parseInt(document.getElementById('max-trailers').value, 10) || 20;
                     config.MaxPagesPerSource      = parseInt(document.getElementById('max-pages').value, 10) || 3;
+                    config.MinimumMovieBudget    = readNumber('minimum-movie-budget', 10000000);
                     config.PreferredVideoHeight   = parseInt(document.getElementById('video-quality').value, 10) || 720;
                     config.SkipMoviesInLibrary    = document.getElementById('skip-library').checked;
                     config.SkipAlreadyDownloaded  = document.getElementById('skip-downloaded').checked;

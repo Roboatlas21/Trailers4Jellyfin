@@ -54,6 +54,49 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
 
         public void Dispose() => _httpClient.Dispose();
 
+        internal TmdbService(ILogger<TmdbService> logger, HttpClient httpClient)
+        {
+            _logger = logger;
+            _httpClient = httpClient;
+        }
+
+        /// <summary>Only reject movies with a known positive budget below the minimum, in USD.</summary>
+        public async Task<bool> MeetsMinimumBudgetAsync(
+            string tmdbId, string apiKey, long minimumBudget, CancellationToken ct)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (minimumBudget <= 0) return true;
+
+            try
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Get, $"{BaseUrl}/movie/{tmdbId}");
+                ApplyAuth(request, apiKey);
+                using var response = await _httpClient.SendAsync(request, ct).ConfigureAwait(false);
+                response.EnsureSuccessStatusCode();
+                using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false));
+                if (!doc.RootElement.TryGetProperty("budget", out var value)
+                    || value.ValueKind != JsonValueKind.Number
+                    || !value.TryGetInt64(out var budget)
+                    || budget <= 0)
+                {
+                    return true;
+                }
+
+                if (budget >= minimumBudget) return true;
+
+                _logger.LogDebug(
+                    "|Trailers4Jellyfin| TMDB ID {Id} budget {Budget} USD is below minimum {Minimum} USD",
+                    tmdbId, budget, minimumBudget);
+                return false;
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "|Trailers4Jellyfin| Failed to fetch budget for TMDB ID {Id}; allowing unknown budget", tmdbId);
+                return true;
+            }
+        }
+
         // JWT Read Access Tokens start with "eyJ"; v3 short keys (32 hex chars) use ?api_key=.
         private static void ApplyAuth(HttpRequestMessage request, string apiKey)
         {
