@@ -98,6 +98,45 @@
                                 One video is chosen at random.
                             </div>
                         </div>
+
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="episode-preroll-folder">Episode Pre-Roll Folder</label>
+                            <input type="text" id="episode-preroll-folder" is="emby-input" placeholder="/media/episode-prerolls" />
+                            <div class="fieldDescription">
+                                Optional folder of commercials or bumpers for TV episodes. Leave blank to disable.
+                                The limits below apply per user. Episodes with a saved resume position are skipped.
+                            </div>
+                        </div>
+
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="episode-preroll-chance">Chance per eligible episode (%)</label>
+                            <input type="number" id="episode-preroll-chance" is="emby-input" min="0" max="100" step="1" required />
+                            <div class="fieldDescription">Chance after all frequency limits are satisfied. 0 disables episode commercials; 100 always selects one when eligible.</div>
+                        </div>
+
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="episode-preroll-cooldown">Minimum time between commercials (minutes)</label>
+                            <input type="number" id="episode-preroll-cooldown" is="emby-input" min="0" max="10080" step="1" required />
+                            <div class="fieldDescription">Minimum time since the previous commercial started. 0 disables the cooldown.</div>
+                        </div>
+
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="episode-preroll-spacing">Episode starts between commercials</label>
+                            <input type="number" id="episode-preroll-spacing" is="emby-input" min="0" max="100" step="1" required />
+                            <div class="fieldDescription">Fresh episode starts required after a commercial. The episode following that commercial counts. 0 disables spacing.</div>
+                        </div>
+
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="episode-preroll-limit">Maximum commercials per window</label>
+                            <input type="number" id="episode-preroll-limit" is="emby-input" min="0" max="100" step="1" required />
+                            <div class="fieldDescription">Maximum commercials within the rolling window below. 0 disables this limit.</div>
+                        </div>
+
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="episode-preroll-window">Rolling window (hours)</label>
+                            <input type="number" id="episode-preroll-window" is="emby-input" min="1" max="168" step="1" required />
+                            <div class="fieldDescription">How far back to count commercials for the maximum above.</div>
+                        </div>
                     </fieldset>
 
                     <!-- Languages -->
@@ -336,6 +375,12 @@
         <script type="text/javascript">
             var pluginId = "7635bf62-6b22-4c4c-9bc7-5d55f0c2bff0";
 
+            function readNumber(id, fallback) {
+                var input = document.getElementById(id);
+                var value = parseInt(input.value, 10);
+                return Number.isNaN(value) ? fallback : Math.max(Number(input.min), Math.min(Number(input.max), value));
+            }
+
             $('.trailers4JellyfinConfigPage').on('pageshow', function () {
                 Dashboard.showLoadingMsg();
                 ApiClient.getPluginConfiguration(pluginId).then(function (config) {
@@ -345,6 +390,12 @@
                     document.getElementById('num-trailers').value           = config.NumberOfTrailers ?? 2;
                     document.getElementById('enable-genre-matching').checked = config.EnableGenreMatching !== false;
                     document.getElementById('feature-preroll-folder').value  = config.FeaturePreRollFolder || '';
+                    document.getElementById('episode-preroll-folder').value  = config.EpisodePreRollFolder || '';
+                    document.getElementById('episode-preroll-chance').value = config.EpisodePreRollChancePercent ?? 75;
+                    document.getElementById('episode-preroll-cooldown').value = config.EpisodePreRollCooldownMinutes ?? 60;
+                    document.getElementById('episode-preroll-spacing').value = config.EpisodePreRollMinEpisodes ?? 3;
+                    document.getElementById('episode-preroll-limit').value = config.EpisodePreRollMaxPerWindow ?? 2;
+                    document.getElementById('episode-preroll-window').value = config.EpisodePreRollWindowHours ?? 4;
                     document.getElementById('source-now-playing').checked   = config.SourceNowPlaying !== false;
                     document.getElementById('source-upcoming').checked      = config.SourceUpcoming !== false;
                     document.getElementById('source-popular').checked       = !!config.SourcePopular;
@@ -380,6 +431,12 @@
                     config.NumberOfTrailers       = Number.isNaN(numTrailers) ? 2 : Math.max(0, numTrailers);
                     config.EnableGenreMatching    = document.getElementById('enable-genre-matching').checked;
                     config.FeaturePreRollFolder   = document.getElementById('feature-preroll-folder').value;
+                    config.EpisodePreRollFolder   = document.getElementById('episode-preroll-folder').value;
+                    config.EpisodePreRollChancePercent = readNumber('episode-preroll-chance', 75);
+                    config.EpisodePreRollCooldownMinutes = readNumber('episode-preroll-cooldown', 60);
+                    config.EpisodePreRollMinEpisodes = readNumber('episode-preroll-spacing', 3);
+                    config.EpisodePreRollMaxPerWindow = readNumber('episode-preroll-limit', 2);
+                    config.EpisodePreRollWindowHours = readNumber('episode-preroll-window', 4);
                     config.SourceNowPlaying       = document.getElementById('source-now-playing').checked;
                     config.SourceUpcoming         = document.getElementById('source-upcoming').checked;
                     config.SourcePopular          = document.getElementById('source-popular').checked;

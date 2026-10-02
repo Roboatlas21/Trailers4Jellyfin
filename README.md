@@ -105,6 +105,22 @@ Example:
 
 None of those folders need to be added to Jellyfin as media libraries.
 
+### Episode commercials
+
+Set **Episode Pre-Roll Folder** to a folder of commercials and enable Cinema Mode for TV episodes in your client. The folder does not need a Jellyfin library. All frequency controls are plugin settings:
+
+| Setting | Default | Effect |
+|---|---|---|
+| Chance per eligible episode | 75% | Fresh random roll after the limits below pass; 0 disables commercials |
+| Minimum time between commercials | 60 minutes | Cooldown since the last commercial actually started; 0 disables it |
+| Episode starts between commercials | 3 | Fresh episode starts since the last commercial; 0 disables spacing |
+| Maximum commercials per window | 2 | Rolling limit per user; 0 disables this limit |
+| Rolling window | 4 hours | Lookback for the limit, adjustable from 1 to 168 hours |
+
+A new user is immediately eligible. The episode following a commercial counts toward the next spacing interval. Selecting a commercial does not consume the cooldown or quota: those are recorded when playback starts. Counters and recent commercial timestamps survive server restarts.
+
+These are best-effort frequency controls for occasional commercials. Duplicate playback reports receive basic protection, but simultaneous playback on multiple devices can exceed a limit. Episodes with a saved Jellyfin resume position are skipped; the client should also skip intros when resuming. The random roll is made for each eligible intro request, so repeated viewings are not permanently assigned the same outcome.
+
 ### Download settings
 
 | Setting | Description |

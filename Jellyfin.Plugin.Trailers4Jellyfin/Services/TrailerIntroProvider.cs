@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Jellyfin.Database.Implementations.Entities;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
+using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using Microsoft.Extensions.Logging;
 
@@ -16,23 +17,32 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
     public class TrailerIntroProvider : IIntroProvider
     {
         private readonly CinemaAssetRegistry _assetRegistry;
+        private readonly EpisodePrerollCoordinator _episodePrerollCoordinator;
+        private readonly IUserDataManager _userDataManager;
         private readonly ILogger<TrailerIntroProvider> _logger;
 
         public string Name => "Trailers4Jellyfin";
 
         public TrailerIntroProvider(
             CinemaAssetRegistry assetRegistry,
+            EpisodePrerollCoordinator episodePrerollCoordinator,
+            IUserDataManager userDataManager,
             ILogger<TrailerIntroProvider> logger)
         {
             _assetRegistry = assetRegistry;
+            _episodePrerollCoordinator = episodePrerollCoordinator;
+            _userDataManager = userDataManager;
             _logger = logger;
         }
 
-        public Task<IEnumerable<IntroInfo>> GetIntros(BaseItem item, User user)
+        public async Task<IEnumerable<IntroInfo>> GetIntros(BaseItem item, User user)
         {
             try
             {
-                return GetIntrosInternal(item);
+                if (item is Episode episode)
+                    return await GetEpisodeIntrosAsync(episode, user).ConfigureAwait(false);
+
+                return await GetIntrosInternal(item).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -40,8 +50,45 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
                 _logger.LogError(
                     ex,
                     "|Trailers4Jellyfin| GetIntros threw unexpectedly — returning no intros to protect playback");
-                return Task.FromResult(Enumerable.Empty<IntroInfo>());
+                return Enumerable.Empty<IntroInfo>();
             }
+        }
+
+        private async Task<IEnumerable<IntroInfo>> GetEpisodeIntrosAsync(Episode episode, User user)
+        {
+            var config = Plugin.Instance?.Configuration;
+            if (config == null || !config.EnableCinemaMode || config.EpisodePreRollChancePercent <= 0)
+                return Enumerable.Empty<IntroInfo>();
+
+            var isResume = _userDataManager.GetUserData(user, episode)?.PlaybackPositionTicks > 0;
+            if (isResume)
+                return Enumerable.Empty<IntroInfo>();
+
+            var episodePreRolls = _assetRegistry.SyncEpisodePreRolls(config.EpisodePreRollFolder);
+            if (episodePreRolls.Count == 0)
+                return Enumerable.Empty<IntroInfo>();
+
+            var selectedId = await _episodePrerollCoordinator
+                .SelectPrerollAsync(
+                    user.Id,
+                    episodePreRolls.Select(static p => p.Id).ToArray(),
+                    isResume,
+                    config)
+                .ConfigureAwait(false);
+
+            if (!selectedId.HasValue)
+                return Enumerable.Empty<IntroInfo>();
+
+            var selected = episodePreRolls.FirstOrDefault(p => p.Id == selectedId.Value);
+            if (selected == null)
+                return Enumerable.Empty<IntroInfo>();
+
+            _logger.LogInformation(
+                "|Trailers4Jellyfin| Queuing episode pre-roll '{PreRoll}' before '{Episode}'",
+                selected.Name,
+                episode.Name);
+
+            return new[] { ToIntroInfo(selected) };
         }
 
         private Task<IEnumerable<IntroInfo>> GetIntrosInternal(BaseItem item)

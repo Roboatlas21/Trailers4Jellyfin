@@ -39,6 +39,12 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Configuration
         public int NumberOfTrailers { get; set; } = 2;
         public bool EnableGenreMatching { get; set; } = true;
         public string FeaturePreRollFolder { get; set; } = string.Empty;
+        public string EpisodePreRollFolder { get; set; } = string.Empty;
+        public int EpisodePreRollChancePercent { get; set; } = 75;
+        public int EpisodePreRollCooldownMinutes { get; set; } = 60;
+        public int EpisodePreRollMinEpisodes { get; set; } = 3;
+        public int EpisodePreRollMaxPerWindow { get; set; } = 2;
+        public int EpisodePreRollWindowHours { get; set; } = 4;
 
         // ── Languages ─────────────────────────────────────────────────────────
 

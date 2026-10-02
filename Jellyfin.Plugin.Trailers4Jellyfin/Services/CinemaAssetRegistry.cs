@@ -26,6 +26,7 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
         private const string DownloadedTrailerProviderKey = "trailers4jellyfin.trailer";
         private const string TrailerPreRollProviderKey = "trailers4jellyfin.trailer-preroll";
         private const string FeaturePreRollProviderKey = "trailers4jellyfin.feature-preroll";
+        private const string EpisodePreRollProviderKey = "trailers4jellyfin.episode-preroll";
 
         private static readonly HashSet<string> VideoExtensions = new(StringComparer.OrdinalIgnoreCase)
         {
@@ -65,6 +66,19 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
             {
                 return SyncFolder(folder, DownloadedTrailerProviderKey, "downloaded trailer");
             }
+        }
+
+        public IReadOnlyList<Video> SyncEpisodePreRolls(string? folder)
+        {
+            lock (_syncLock)
+            {
+                return SyncFolder(folder, EpisodePreRollProviderKey, "episode pre-roll");
+            }
+        }
+
+        public static bool IsEpisodePreRoll(BaseItem item)
+        {
+            return item.ProviderIds?.ContainsKey(EpisodePreRollProviderKey) == true;
         }
 
         private IReadOnlyList<Video> SyncFolder(
