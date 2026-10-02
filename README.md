@@ -1,84 +1,158 @@
 # Trailers4Jellyfin
 
-A Jellyfin plugin that automatically downloads movie trailers from TMDB/YouTube and saves them locally, so Jellyfin's Cinema Mode can play them before your movies.
+A Jellyfin plugin that automatically downloads movie trailers from TMDB/YouTube and plays them through Jellyfin Cinema Mode.
 
-## How it works
+This branch also manages optional trailer pre-roll and feature pre-roll folders without requiring any of those folders to be exposed as normal Jellyfin libraries.
 
-1. A daily scheduled task scans every movie in your Jellyfin library.
-2. For each movie, it looks up the TMDB ID (already stored in Jellyfin's metadata, or found via a search).
-3. It fetches the official trailer(s) from TMDB, which point to YouTube.
-4. It downloads the trailer video and saves it locally.
-5. Jellyfin picks up the file as a **Local Trailer**, making it available to Cinema Mode automatically.
+## Cinema Mode order
+
+When Cinema Mode is enabled, the plugin returns intros in this order:
+
+```text
+Trailer Pre-Roll
+→ Downloaded Trailer(s)
+→ Feature Pre-Roll
+→ Movie
+```
+
+Each configured pre-roll folder contributes one random video. Leave either folder blank to skip that stage. Set **Trailers per movie** to 0 if you only want the pre-roll stages.
+
+## Private Cinema Mode assets
+
+Trailers, trailer pre-rolls, and feature pre-rolls are registered as private, unparented Jellyfin video items. This follows the same architecture used by Local Intros Extended: the plugin creates internal Jellyfin items with its own provider IDs and returns those ItemIds through `IIntroProvider`.
+
+Because the items do not belong to a normal media library:
+
+- You do **not** need a visible `Trailers` library.
+- You do **not** need visible trailer/feature pre-roll libraries.
+- Users do not need library access to those helper assets.
+- The assets do not create normal library navigation or Recently Added rows.
+- Jellyfin still gets stable ItemIds for playback and watched-state tracking.
+
+The plugin automatically reconciles its internal registrations with the configured folders during Cinema Mode requests and trailer download runs. Files removed from disk have their private registrations cleaned up.
+
+## Trailer metadata and filtering
+
+Downloaded trailers keep a JSON sidecar next to each video. The sidecar stores:
+
+- TMDB movie ID
+- title
+- year
+- genres
+- parental rating/certification
+
+Genre matching reads the sidecar directly, so it does not depend on a Jellyfin Trailers library.
+
+Parental-rating filtering also reads the stored certification. Unknown/missing ratings keep the existing permissive behavior and are allowed. Existing legacy sidecars are backfilled when the scheduled task encounters the corresponding downloaded trailer again.
 
 ## Requirements
 
-- Jellyfin 10.11+
+- Jellyfin 12.1 and the .NET 10 SDK for building
 - A free [TMDB API key](https://www.themoviedb.org/settings/api)
-- *(Optional)* [yt-dlp](https://github.com/yt-dlp/yt-dlp) + [ffmpeg](https://ffmpeg.org/) for 1080p downloads
+- *(Optional)* [yt-dlp](https://github.com/yt-dlp/yt-dlp) + [ffmpeg](https://ffmpeg.org/) for higher-quality downloads
 
 ## Installation
 
 ### Via Jellyfin Plugin Catalogue
 
-1. In your Jellyfin dashboard go to **Admin → Plugins → Repositories**.
-2. Add a new repository with this URL:
-   ```
-  https://raw.githubusercontent.com/robadieNZ/Trailers4Jellyfin/main/manifest.json
-   ```
-3. Go to **Catalog**, find **Trailers4Jellyfin** under General, and click Install.
+1. In the Jellyfin dashboard go to **Admin → Plugins → Repositories**.
+2. Add the repository URL from the upstream project.
+3. Install **Trailers4Jellyfin** from the catalogue.
 4. Restart Jellyfin.
 
-### Manual
+For testing this development branch, build/install it manually instead of using the upstream catalogue package.
 
-1. Download the latest `Jellyfin.Plugin.Trailers4Jellyfin.dll` from [Releases](../../releases).
-2. Copy it to your Jellyfin `plugins/` directory.
-3. Restart Jellyfin.
+### Manual build
+
+```sh
+git clone https://github.com/Roboatlas21/Trailers4Jellyfin
+cd Trailers4Jellyfin
+git checkout feat/internal-cinema-mode-assets
+dotnet publish Jellyfin.Plugin.Trailers4Jellyfin/Jellyfin.Plugin.Trailers4Jellyfin.csproj --configuration Release --output bin
+```
+
+Copy the built plugin files into the Jellyfin plugin directory and restart Jellyfin.
 
 ## Configuration
 
 Go to **Admin → Plugins → Trailers4Jellyfin**.
 
+### Cinema Mode
+
 | Setting | Description |
 |---|---|
-| **TMDB API Key** | Your TMDB v3 API key |
-| **Place trailers alongside movies** | Saves each trailer into a `trailers/` subfolder next to the movie. Jellyfin picks this up automatically. **(Recommended)** |
-| **Download Folder** | Used when the above is disabled. Point a Jellyfin Movies library here and use it as a Cinema Mode pre-roll library. |
-| **Max trailers per movie** | How many trailers to download per movie (default: 1) |
-| **Preferred video quality** | 720p (default), 480p, or 1080p (requires yt-dlp) |
-| **Skip movies with existing trailers** | Skip movies that already have a local trailer |
-| **yt-dlp path** | Full path to `yt-dlp` executable for 1080p support |
+| **Enable Cinema Mode** | Registers Trailers4Jellyfin as a Jellyfin intro provider |
+| **Trailer Pre-Roll Folder** | Optional folder; one random video plays before trailers |
+| **Trailers per movie** | Number of downloaded trailers to play; 0 disables the trailer block |
+| **Match trailers to movie genre** | Prefers trailers whose stored TMDB genres match the feature |
+| **Feature Pre-Roll Folder** | Optional folder; one random video plays after trailers and before the movie |
+
+Example:
+
+```text
+/data/trailer-prerolls/
+    Coming Attractions.mp4
+
+/data/trailers/
+    Movie A (2026).mp4
+    Movie A (2026).json
+    Movie B (2026).mp4
+    Movie B (2026).json
+
+/data/feature-prerolls/
+    RocketCloud Pictures.mp4
+```
+
+None of those folders need to be added to Jellyfin as media libraries.
+
+### Download settings
+
+| Setting | Description |
+|---|---|
+| **TMDB API Key** | TMDB v3 API key or read-access token |
+| **Download Folder** | Where downloaded trailers and metadata sidecars are stored |
+| **Max trailers per run** | Maximum new trailers to download in one task run |
+| **Preferred video quality** | 480p/720p built-in or higher quality with yt-dlp |
+| **Skip movies already in my Jellyfin library** | Avoid downloading trailers for movies you already own |
+| **Skip trailers already downloaded** | Reuse existing trailer files |
+| **yt-dlp path** | Optional explicit yt-dlp executable path |
+| **ffmpeg path** | Optional ffmpeg path used by yt-dlp |
+| **YouTube cookies file** | Optional cookies.txt path |
+
+## Trailer rotation
+
+The scheduled task can:
+
+- cap the total number of downloaded trailers
+- remove the oldest trailers when above the cap
+- delete trailers marked watched by any user
+
+Watched-state checks use the plugin's private Jellyfin trailer items, so they continue to work without a visible Trailers library.
 
 ## Running the task
 
-After configuring, go to **Admin → Scheduled Tasks → Trailers4Jellyfin** and click **Run** to do an immediate download pass. The task will then run automatically once per day.
+Go to **Admin → Scheduled Tasks → Trailers4Jellyfin → Download TMDB Trailers** and run it.
 
-After the task completes, trigger a **Library Scan** so Jellyfin indexes the new trailer files.
+No Jellyfin library scan is required after downloads. The plugin registers downloaded trailers internally.
+
+## Client setup
+
+The server plugin provides the Cinema Mode items, but the client still has to request Cinema Mode intros.
+
+For Moonfin, enable:
+
+```text
+Settings → Playback & SyncPlay → Automation & Queue → Cinema Mode
+```
+
+A separate CherryFloors Cinema Mode server plugin is not required for this setup.
 
 ## Quality notes
 
 | Mode | Max quality | Requirements |
 |---|---|---|
 | Built-in (YoutubeExplode) | 720p | None |
-| yt-dlp | 1080p+ | yt-dlp + ffmpeg on PATH |
-
-The built-in downloader uses [YoutubeExplode](https://github.com/Tyrrrz/YoutubeExplode) and requires no external tools. For 1080p, YouTube delivers video and audio as separate streams that must be merged — yt-dlp handles this automatically when ffmpeg is available.
-
-## Using with Cinema Mode
-
-This plugin works with Jellyfin's built-in Cinema Mode setting.
-
-- **Alongside movies mode**: Trailers are saved as Local Trailers. Cinema Mode picks them up automatically via Jellyfin's trailer selection.
-- **Dedicated folder mode**: Create a Jellyfin Movies library pointing at the download folder, then set it as the Trailer Pre-Roll Library in the Cinema Mode plugin config.
-
-## Building from source
-
-```sh
-git clone https://github.com/robadieNZ/Trailers4Jellyfin
-cd Trailers4Jellyfin
-dotnet publish --configuration Release --output bin
-```
-
-Place `Jellyfin.Plugin.Trailers4Jellyfin.dll` and its dependencies in your Jellyfin `plugins/` directory.
+| yt-dlp | Depends on configured wrapper/options | yt-dlp + ffmpeg |
 
 ## Licence
 
