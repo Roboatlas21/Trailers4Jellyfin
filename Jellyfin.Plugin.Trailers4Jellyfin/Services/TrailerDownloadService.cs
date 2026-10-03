@@ -277,54 +277,65 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
                     "|Trailers4Jellyfin| Downloading {Key} via yt-dlp at max {Height}p to {Path}",
                     key, preferredHeight, outputPath);
 
-                using var process = new Process { StartInfo = startInfo };
-
-                // yt-dlp writes continuous progress output while downloading each of its
-                // (video/audio/merge) parts. If stdout/stderr aren't drained concurrently,
-                // the OS pipe buffer fills up, yt-dlp blocks on write(), and the process
-                // hangs indefinitely instead of exiting — draining both streams via the
-                // *DataReceived events (started before WaitForExitAsync) avoids that deadlock.
-                var stderrBuilder = new System.Text.StringBuilder();
-                process.OutputDataReceived += (_, _) => { };
-                process.ErrorDataReceived += (_, e) =>
+                for (var attempt = 1; attempt <= 2; attempt++)
                 {
-                    if (e.Data != null) stderrBuilder.AppendLine(e.Data);
-                };
+                    using var process = new Process { StartInfo = startInfo };
 
-                process.Start();
-                process.BeginOutputReadLine();
-                process.BeginErrorReadLine();
+                    // yt-dlp writes continuous progress output while downloading each of its
+                    // (video/audio/merge) parts. If stdout/stderr aren't drained concurrently,
+                    // the OS pipe buffer fills up, yt-dlp blocks on write(), and the process
+                    // hangs indefinitely instead of exiting — draining both streams via the
+                    // *DataReceived events (started before WaitForExitAsync) avoids that deadlock.
+                    var stderrBuilder = new System.Text.StringBuilder();
+                    process.OutputDataReceived += (_, _) => { };
+                    process.ErrorDataReceived += (_, e) =>
+                    {
+                        if (e.Data != null) stderrBuilder.AppendLine(e.Data);
+                    };
 
-                try
-                {
-                    await process.WaitForExitAsync(ct).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
-                    // Disposing the Process does not stop the child. Without this, cancelling the
-                    // task leaves yt-dlp running against the same output path, so the next run
-                    // races an invisible orphan.
+                    process.Start();
+                    process.BeginOutputReadLine();
+                    process.BeginErrorReadLine();
+
                     try
                     {
-                        if (!process.HasExited)
-                            process.Kill(entireProcessTree: true);
+                        await process.WaitForExitAsync(ct).ConfigureAwait(false);
                     }
-                    catch (Exception killEx)
+                    catch (OperationCanceledException)
                     {
-                        _logger.LogWarning(killEx, "|Trailers4Jellyfin| Could not stop yt-dlp after cancellation");
+                        // Disposing the Process does not stop the child. Without this, cancelling the
+                        // task leaves yt-dlp running against the same output path, so the next run
+                        // races an invisible orphan.
+                        try
+                        {
+                            if (!process.HasExited)
+                                process.Kill(entireProcessTree: true);
+                        }
+                        catch (Exception killEx)
+                        {
+                            _logger.LogWarning(killEx, "|Trailers4Jellyfin| Could not stop yt-dlp after cancellation");
+                        }
+
+                        throw;
                     }
 
-                    throw;
-                }
+                    if (process.ExitCode == 0)
+                        return File.Exists(outputPath);
 
-                if (process.ExitCode != 0)
-                {
                     _logger.LogError("|Trailers4Jellyfin| yt-dlp exited with code {Code} for {Key}: {Error}",
                         process.ExitCode, key, stderrBuilder.ToString());
-                    return false;
+
+                    CleanupYtDlpArtifacts(outputPath);
+
+                    if (attempt == 1)
+                    {
+                        _logger.LogWarning(
+                            "|Trailers4Jellyfin| yt-dlp failed for {Key}; retrying once",
+                            key);
+                    }
                 }
 
-                return File.Exists(outputPath);
+                return false;
             }
             catch (OperationCanceledException)
             {
@@ -332,8 +343,30 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
             }
             catch (Exception ex)
             {
+                CleanupYtDlpArtifacts(outputPath);
                 _logger.LogError(ex, "|Trailers4Jellyfin| yt-dlp download failed for {Key}", key);
                 return false;
+            }
+        }
+
+        private static void CleanupYtDlpArtifacts(string outputPath)
+        {
+            var directory = Path.GetDirectoryName(outputPath);
+            if (string.IsNullOrEmpty(directory) || !Directory.Exists(directory))
+                return;
+
+            var outputName = Path.GetFileName(outputPath);
+            var stem = Path.GetFileNameWithoutExtension(outputPath);
+
+            foreach (var file in Directory.EnumerateFiles(directory))
+            {
+                var name = Path.GetFileName(file);
+                if ((name.Equals(outputName, StringComparison.Ordinal)
+                        || name.StartsWith(stem + ".", StringComparison.Ordinal))
+                    && IsPartialDownloadArtifact(file))
+                {
+                    File.Delete(file);
+                }
             }
         }
 
