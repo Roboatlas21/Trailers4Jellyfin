@@ -29,7 +29,15 @@ public sealed partial class TrailerSelectionTests : IDisposable
         _history = (UserDataProxy)(object)manager;
         var library = DispatchProxy.Create<ILibraryManager, SelectionLibraryProxy>();
         _library = (SelectionLibraryProxy)(object)library;
-        _provider = new(null!, null!, manager, TrailerRatingPolicyTests.CreatePolicy(), library, NullLogger<TrailerIntroProvider>.Instance);
+        var rankingStore = new TrailerRankingStore(NullLogger<TrailerRankingStore>.Instance);
+        _provider = new(
+            null!,
+            null!,
+            manager,
+            TrailerRatingPolicyTests.CreatePolicy(),
+            library,
+            rankingStore,
+            NullLogger<TrailerIntroProvider>.Instance);
     }
 
     [Theory]
@@ -117,7 +125,7 @@ public sealed partial class TrailerSelectionTests : IDisposable
     }
 
     [Fact]
-    public void TrailerPreference_OrdersWithinGroupAndRemainsPerUser()
+    public void TrailerPreference_UsesOnlyUnwatchedWithinGroupAndRemainsPerUser()
     {
         _config.PreferUnwatchedTrailers = true;
         var match = Trailer("match", "{\"genres\":[\"Comedy\"],\"officialRating\":\"PG\"}");
@@ -126,7 +134,10 @@ public sealed partial class TrailerSelectionTests : IDisposable
         var feature = new Movie { OfficialRating = "PG", Genres = new[] { "Comedy" } };
         var items = new[] { match, other };
         var result = _provider.SelectTrailers(feature, items, _config, _user);
-        Assert.Equal(new[] { other.Id, match.Id }, result.Select(item => item.Id));
+
+        // Any unwatched trailer in the selected genre group suppresses watched trailers
+        // for this play instead of filling the remaining trailer slots with watched items.
+        Assert.Equal(other.Id, Assert.Single(result).Id);
 
         var otherUser = new User(_user.Username, "auth", "reset");
         result = _provider.SelectTrailers(feature, items, _config, otherUser);
