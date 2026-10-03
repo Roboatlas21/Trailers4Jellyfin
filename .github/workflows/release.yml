@@ -69,7 +69,7 @@ jobs:
           zip -j "trailers4jellyfin_${RELEASE_VERSION}.zip" \
             bin/Jellyfin.Plugin.Trailers4Jellyfin.dll bin/YoutubeExplode.dll
 
-      - name: Prepare catalog entry and release notes
+      - name: Prepare catalog entry
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
@@ -80,20 +80,6 @@ jobs:
           CHECKSUM=$(md5sum "trailers4jellyfin_${RELEASE_VERSION}.zip" | cut -d' ' -f1)
           python3 update_manifest.py "$RELEASE_VERSION" "$CHECKSUM"
           cp manifest.json "$RUNNER_TEMP/trailers4jellyfin-manifest.json"
-          python3 - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-
-          entry = json.loads(Path('manifest.json').read_text())[0]['versions'][0]
-          url = f"https://raw.githubusercontent.com/{os.environ['GITHUB_REPOSITORY']}/main/manifest.json"
-          Path('release-notes.md').write_text(
-              'Requires Jellyfin 12.1 or newer.\n\n' + entry['changelog'] +
-              '\nInstall or update through **Dashboard → Plugins → Repositories** using:\n\n' +
-              f'```text\n{url}\n```\n\n' +
-              'Existing plugin settings and external yt-dlp wrappers are preserved. Restart Jellyfin after updating.\n'
-          )
-          PY
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -101,7 +87,6 @@ jobs:
           tag_name: v${{ steps.version.outputs.VERSION }}
           target_commitish: ${{ github.sha }}
           name: Trailers4Jellyfin ${{ steps.version.outputs.VERSION }}
-          body_path: release-notes.md
           files: trailers4jellyfin_${{ steps.version.outputs.VERSION }}.zip
           fail_on_unmatched_files: true
 

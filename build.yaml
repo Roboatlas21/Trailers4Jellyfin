@@ -1,5 +1,5 @@
 ---
-version: 2.0.18.2
+version: 2.0.18.3
 name: Trailers4Jellyfin
 guid: 7635bf62-6b22-4c4c-9bc7-5d55f0c2bff0
 description: >
@@ -10,10 +10,7 @@ overview: Cinema-style trailers for movies you haven't seen yet
 category: General
 owner: Roboatlas21
 targetAbi: 12.1.0.0
-changelog:
-  - "Add independent Prefer unwatched checkboxes for trailer pre-rolls, trailers, feature pre-rolls, and episode commercials."
-  - "Use the current Jellyfin user's watched history, with watched clips available when needed. Preferences default to off."
-  - "Prioritize unwatched trailers before genre matching while preserving parental-rating filtering and episode frequency limits."
+changelog: []
 
 dotnetProjects:
   - name: Jellyfin.Plugin.Trailers4Jellyfin
