@@ -14,6 +14,82 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Tests.Services;
 
 public sealed class TmdbCandidateSelectionTests
 {
+    [Theory]
+    [InlineData(50, 4)]
+    [InlineData(100, 4)]
+    [InlineData(150, 6)]
+    public void DiscoveryPageDepth_ScalesWithTrailerPoolTarget(int maxTotalTrailers, int expectedPages)
+    {
+        Assert.Equal(
+            expectedPages,
+            TmdbService.ResolveDiscoveryPageDepth(
+                configuredPages: 4,
+                maxTotalTrailers));
+    }
+
+    [Theory]
+    [InlineData(50, 4)]
+    [InlineData(100, 4)]
+    [InlineData(150, 6)]
+    public async Task CandidateDiscovery_UsesAdaptivePageDepthForTrailerPoolTarget(
+        int maxTotalTrailers,
+        int expectedPages)
+    {
+        var today = DateTime.UtcNow.Date;
+        var requestedPages = new List<int>();
+
+        using var handler = new StubHandler((request, _) =>
+        {
+            var uri = request.RequestUri!;
+            Assert.EndsWith("/discover/movie", uri.AbsolutePath, StringComparison.Ordinal);
+
+            var queryParts = Uri.UnescapeDataString(uri.Query)
+                .TrimStart('?')
+                .Split('&', StringSplitOptions.RemoveEmptyEntries);
+            var page = int.Parse(
+                queryParts.Single(part => part.StartsWith("page=", StringComparison.Ordinal))[5..],
+                System.Globalization.CultureInfo.InvariantCulture);
+
+            requestedPages.Add(page);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    Page(
+                        page,
+                        totalPages: 10,
+                        Movie(
+                            10_000 + page,
+                            $"Popular {page}",
+                            today.AddDays(-1),
+                            100 - page,
+                            1000,
+                            8.0)))
+            });
+        });
+
+        using var service = new TmdbService(
+            NullLogger<TmdbService>.Instance,
+            new HttpClient(handler));
+
+        var config = new PluginConfiguration
+        {
+            TmdbApiKey = "test-key",
+            MaxPagesPerSource = 4,
+            MaxTotalTrailers = maxTotalTrailers,
+            SourceNowPlaying = false,
+            SourceUpcoming = false,
+            SourcePopular = true,
+            SourceTopRated = false,
+        };
+
+        var movies = await service.GetCandidateMoviesAsync(
+            config,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(Enumerable.Range(1, expectedPages), requestedPages);
+        Assert.Equal(expectedPages, movies.Count);
+    }
+
     [Fact]
     public async Task SourceQueriesApplyFiltersBeforePaginationAndMergeByEffectivePopularity()
     {
@@ -99,7 +175,10 @@ public sealed class TmdbCandidateSelectionTests
     }
 
     private static string Page(params string[] movies) =>
-        "{\"page\":1,\"total_pages\":1,\"results\":[" + string.Join(",", movies) + "]}";
+        Page(1, 1, movies);
+
+    private static string Page(int page, int totalPages, params string[] movies) =>
+        $"{{\"page\":{page},\"total_pages\":{totalPages},\"results\":[" + string.Join(",", movies) + "]}";
 
     private static string Movie(int id, string title, DateTime release, double popularity, int votes, double rating) =>
         $"{{\"id\":{id},\"title\":\"{title}\",\"release_date\":\"{release:yyyy-MM-dd}\",\"genre_ids\":[28],\"popularity\":{popularity.ToString(System.Globalization.CultureInfo.InvariantCulture)},\"vote_count\":{votes},\"vote_average\":{rating.ToString(System.Globalization.CultureInfo.InvariantCulture)}}}";

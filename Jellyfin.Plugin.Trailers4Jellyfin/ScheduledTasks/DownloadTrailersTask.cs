@@ -164,7 +164,13 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
                     StringComparer.OrdinalIgnoreCase) as IReadOnlySet<string>;
 
             progress.Report(10);
-            _logger.LogInformation("|Trailers4Jellyfin| Fetching ranked candidates from TMDB...");
+            var discoveryPages = TmdbService.ResolveDiscoveryPageDepth(
+                config.MaxPagesPerSource,
+                config.MaxTotalTrailers);
+            _logger.LogInformation(
+                "|Trailers4Jellyfin| Fetching ranked candidates from TMDB ({Pages} page(s)/source, target pool {Target})...",
+                discoveryPages,
+                config.MaxTotalTrailers);
             var candidates = await _tmdbService.GetCandidateMoviesAsync(config, cancellationToken).ConfigureAwait(false);
 
             // Source methods deliberately tolerate individual TMDB failures. If every source

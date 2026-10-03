@@ -57,6 +57,10 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
         private readonly HttpClient _httpClient;
         private readonly ILogger<TmdbService> _logger;
         private const string BaseUrl = "https://api.themoviedb.org/3";
+        private const int MaximumAdaptivePagesPerSource = 10;
+        private const int CalibratedPoolSize = 100;
+        private const int CalibratedPagesPerSource = 4;
+        private const int TargetTrailersPerDiscoveryPage = CalibratedPoolSize / CalibratedPagesPerSource;
 
         public TmdbService(ILogger<TmdbService> logger)
         {
@@ -270,6 +274,19 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
         {
             var today = DateTime.UtcNow.Date;
             var region = NormalizeRegion(config.TheatricalRegion);
+            var maxPagesPerSource = ResolveDiscoveryPageDepth(
+                config.MaxPagesPerSource,
+                config.MaxTotalTrailers);
+
+            var configuredPages = Math.Clamp(config.MaxPagesPerSource, 1, MaximumAdaptivePagesPerSource);
+            if (maxPagesPerSource > configuredPages)
+            {
+                _logger.LogInformation(
+                    "|Trailers4Jellyfin| Expanding TMDB discovery from {ConfiguredPages} to {EffectivePages} page(s) per source for target pool size {Target}",
+                    configuredPages,
+                    maxPagesPerSource,
+                    config.MaxTotalTrailers);
+            }
 
             DateTime? releasedAfter = config.ReleaseDateRangeMonths > 0
                 ? today.AddMonths(-config.ReleaseDateRangeMonths)
@@ -287,7 +304,7 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
                     region,
                     config.InTheatresMinimumVotes,
                     config.InTheatresMinimumRating,
-                    config.MaxPagesPerSource,
+                    maxPagesPerSource,
                     ct).ConfigureAwait(false));
             }
 
@@ -303,7 +320,7 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
                     null,
                     "popularity.desc",
                     TmdbMovieSource.ComingSoon,
-                    config.MaxPagesPerSource,
+                    maxPagesPerSource,
                     ct).ConfigureAwait(false));
             }
 
@@ -319,7 +336,7 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
                     config.PopularMinimumRating,
                     "popularity.desc",
                     TmdbMovieSource.Popular,
-                    config.MaxPagesPerSource,
+                    maxPagesPerSource,
                     ct).ConfigureAwait(false));
             }
 
@@ -335,7 +352,7 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
                     null,
                     "vote_average.desc",
                     TmdbMovieSource.TopRated,
-                    config.MaxPagesPerSource,
+                    maxPagesPerSource,
                     ct).ConfigureAwait(false));
             }
 
@@ -494,6 +511,24 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
                 movie.TryGetProperty("vote_count", out var votes) && votes.TryGetInt32(out var vc) ? vc : 0,
                 movie.TryGetProperty("vote_average", out var rating) && rating.TryGetDouble(out var va) ? va : 0,
                 source);
+        }
+
+        internal static int ResolveDiscoveryPageDepth(int configuredPages, int maxTotalTrailers)
+        {
+            var minimumPages = Math.Clamp(configuredPages, 1, MaximumAdaptivePagesPerSource);
+            if (maxTotalTrailers <= 0)
+                return minimumPages;
+
+            // Four pages/source was validated for a 100-trailer pool. Scale that
+            // discovery depth linearly for larger targets while preserving the
+            // configured value as the minimum. The UI caps discovery at 10 pages/source.
+            var targetPages = (int)Math.Ceiling(
+                maxTotalTrailers / (double)TargetTrailersPerDiscoveryPage);
+
+            return Math.Clamp(
+                Math.Max(minimumPages, targetPages),
+                1,
+                MaximumAdaptivePagesPerSource);
         }
 
         internal static string NormalizeRegion(string? region)

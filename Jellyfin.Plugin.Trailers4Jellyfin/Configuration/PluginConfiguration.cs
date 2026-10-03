@@ -55,6 +55,11 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Configuration
 
         public string DownloadFolder { get; set; } = string.Empty;
         public int MaxTrailersToDownload { get; set; } = 20;
+
+        /// <summary>
+        /// Minimum TMDB discovery pages per enabled source. Larger trailer-pool targets
+        /// automatically expand discovery depth, up to 10 pages per source.
+        /// </summary>
         public int MaxPagesPerSource { get; set; } = 4;
 
         /// <summary>Minimum reliable known movie budget in USD. 0 disables filtering.</summary>

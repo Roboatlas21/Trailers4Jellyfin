@@ -432,11 +432,12 @@
                             </div>
                         </div>
                         <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="max-pages">Pages per TMDB source</label>
+                            <label class="inputLabel inputLabelUnfocused" for="max-pages">Minimum pages per TMDB source</label>
                             <input type="number" id="max-pages" is="emby-input" min="1" max="10" />
                             <div class="fieldDescription">
-                                Number of TMDB result pages fetched from each enabled source. Each page contains up to 20 movies.
-                                Default: 4.
+                                Minimum discovery depth for each enabled source. Larger trailer pools automatically increase
+                                this depth above the configured minimum (4 pages for up to 100 trailers, 6 for 150), up to 10 pages/source.
+                                Each TMDB page contains up to 20 movies. Default: 4.
                             </div>
                         </div>
                         <div class="inputContainer">
