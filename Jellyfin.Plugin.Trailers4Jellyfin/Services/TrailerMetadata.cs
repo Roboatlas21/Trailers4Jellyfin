@@ -11,6 +11,12 @@ public sealed record TrailerCertification(
 
 internal sealed class TrailerMetadata
 {
+    [JsonPropertyName("title")]
+    public string? Title { get; set; }
+
+    [JsonPropertyName("year")]
+    public int? Year { get; set; }
+
     [JsonPropertyName("tmdbId")]
     [JsonConverter(typeof(TmdbIdConverter))]
     public int? TmdbId { get; set; }
@@ -28,7 +34,34 @@ internal sealed class TrailerMetadata
     [JsonPropertyName("certifications")]
     public List<TrailerCertification>? Certifications { get; set; }
 
-    // Metadata upgrades preserve titles, years and any fields added by other versions.
+    [JsonPropertyName("youtubeKey")]
+    public string? YoutubeKey { get; set; }
+
+    [JsonPropertyName("videoName")]
+    public string? VideoName { get; set; }
+
+    [JsonPropertyName("videoType")]
+    public string? VideoType { get; set; }
+
+    [JsonPropertyName("videoOfficial")]
+    public bool? VideoOfficial { get; set; }
+
+    [JsonPropertyName("videoSize")]
+    public int? VideoSize { get; set; }
+
+    [JsonPropertyName("publishedAt")]
+    public System.DateTimeOffset? PublishedAt { get; set; }
+
+    [JsonPropertyName("variantClass")]
+    public string? VariantClass { get; set; }
+
+    [JsonPropertyName("structuralScore")]
+    public int? StructuralScore { get; set; }
+
+    [JsonPropertyName("selectorVersion")]
+    public int SelectorVersion { get; set; }
+
+    // Metadata upgrades preserve fields added by other versions.
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? Extra { get; set; }
 }

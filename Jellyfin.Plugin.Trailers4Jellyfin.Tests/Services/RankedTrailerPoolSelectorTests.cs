@@ -40,7 +40,7 @@ public sealed class RankedTrailerPoolSelectorTests
 
         // Rank 2 fails movie eligibility, rank 4 has no trailer, and rank 5 is scanned
         // to fill the third slot. Rank 6 is never touched once the pool is full.
-        Assert.Equal(new[] { 3, 4, 5 }, trailerLookups);
+        Assert.Equal(new[] { 1, 3, 4, 5 }, trailerLookups);
     }
 
     [Fact]

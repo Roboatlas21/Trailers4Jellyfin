@@ -41,13 +41,16 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
                     continue;
 
                 var existingPath = findExistingTrailer(movie);
+                var trailer = await findTrailer(movie, ct).ConfigureAwait(false);
+
+                // Existing files remain pool-capable even if today's TMDB video lookup fails.
+                // Inspecting them here also enables one-time selector migration and later upgrades.
                 if (existingPath != null)
                 {
-                    desired.Add(new DesiredTrailerCandidate(movie, existingPath, null));
+                    desired.Add(new DesiredTrailerCandidate(movie, existingPath, trailer));
                 }
                 else
                 {
-                    var trailer = await findTrailer(movie, ct).ConfigureAwait(false);
                     if (trailer == null)
                         continue;
 
@@ -282,6 +285,7 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
             // a local trailer or currently expose a suitable TMDB/YouTube trailer.
             int desiredLimit = config.MaxTotalTrailers > 0 ? config.MaxTotalTrailers : rankedCandidates.Count;
             var existingByTmdbId = BuildExistingTrailerIndex(config.DownloadFolder);
+            var videosByTmdbId = new Dictionary<int, IReadOnlyList<TmdbVideo>>();
 
             var desired = await RankedTrailerPoolSelector.SelectAsync(
                 rankedCandidates,
@@ -299,11 +303,12 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
                 {
                     var trailers = await _tmdbService.GetTrailersAsync(
                         movie.Id.ToString(), config.TmdbApiKey, allowedLanguages, ct).ConfigureAwait(false);
+                    videosByTmdbId[movie.Id] = trailers;
 
                     if (trailers.Count == 0)
                     {
                         _logger.LogDebug(
-                            "|Trailers4Jellyfin| Skipping '{Title}' from desired pool: no suitable YouTube trailer on TMDB",
+                            "|Trailers4Jellyfin| No usable YouTube video is currently available on TMDB for '{Title}'",
                             movie.Title);
                         return null;
                     }
@@ -337,52 +342,15 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
 
             int attempted = 0;
             int downloaded = 0;
-            int processed = 0;
 
-            foreach (var candidate in desired)
+            async Task<bool> DownloadSelectedAsync(
+                TmdbMovieResult movie,
+                TmdbVideo trailer,
+                string outputPath,
+                string reason)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-
                 if (attempted >= config.MaxTrailersToDownload)
-                    break;
-
-                var movie = candidate.Movie;
-                double taskProgress = 25 + (65.0 * processed / desired.Count);
-                progress.Report(taskProgress);
-                processed++;
-
-                var outputPath = BuildOutputPath(movie.Title, movie.Year, config);
-                var existingPath = candidate.ExistingPath;
-
-                if (config.SkipAlreadyDownloaded && existingPath != null)
-                {
-                    await EnsureTrailerMetadataAsync(
-                        existingPath,
-                        movie,
-                        genreMap,
-                        config.TmdbApiKey,
-                        cancellationToken).ConfigureAwait(false);
-                    existingByTmdbId[movie.Id] = existingPath;
-                    continue;
-                }
-
-                var trailer = candidate.Trailer;
-                if (trailer == null)
-                {
-                    // This path is normally only used when SkipAlreadyDownloaded is disabled:
-                    // an existing local trailer proved the movie usable during selection, but a
-                    // fresh trailer is required because the user explicitly requested re-downloads.
-                    var trailers = await _tmdbService.GetTrailersAsync(
-                        movie.Id.ToString(), config.TmdbApiKey, allowedLanguages, cancellationToken).ConfigureAwait(false);
-
-                    if (trailers.Count == 0)
-                    {
-                        _logger.LogDebug("|Trailers4Jellyfin| No replacement YouTube trailer on TMDB for '{Title}'", movie.Title);
-                        continue;
-                    }
-
-                    trailer = trailers[0];
-                }
+                    return false;
 
                 if (attempted > 0)
                 {
@@ -395,8 +363,13 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
 
                 attempted++;
                 _logger.LogInformation(
-                    "|Trailers4Jellyfin| [{Attempt}/{Max}] Downloading '{Trailer}' for '{Movie}'",
-                    attempted, config.MaxTrailersToDownload, trailer.Name, movie.Title);
+                    "|Trailers4Jellyfin| [{Attempt}/{Max}] {Reason}: '{Trailer}' for '{Movie}' (score {Score})",
+                    attempted,
+                    config.MaxTrailersToDownload,
+                    reason,
+                    trailer.Name,
+                    movie.Title,
+                    TrailerVideoSelector.GetStructuralScore(trailer));
 
                 var success = await TrailerDownloadService.DownloadAndPublishAsync(
                     outputPath,
@@ -408,17 +381,92 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
                         config.CookiesFilePath,
                         config.FfmpegPath,
                         cancellationToken),
-                    () => WriteTrailerMetadataAsync(outputPath, movie, genreMap, config.TmdbApiKey, cancellationToken),
+                    () => WriteTrailerMetadataAsync(
+                        outputPath,
+                        movie,
+                        trailer,
+                        genreMap,
+                        config.TmdbApiKey,
+                        cancellationToken),
                     cancellationToken).ConfigureAwait(false);
 
-                if (success)
+                if (!success)
+                    return false;
+
+                downloaded++;
+                existingByTmdbId[movie.Id] = outputPath;
+                _logger.LogInformation(
+                    "|Trailers4Jellyfin| [{Attempt}/{Max}] Saved trailer for '{Movie}' ({Downloaded} successful) → {Path}",
+                    attempted,
+                    config.MaxTrailersToDownload,
+                    movie.Title,
+                    downloaded,
+                    outputPath);
+                return true;
+            }
+
+            // Missing pool entries get first use of the per-run download budget.
+            foreach (var candidate in desired.Where(x => x.ExistingPath == null))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (attempted >= config.MaxTrailersToDownload)
+                    break;
+
+                if (candidate.Trailer == null)
+                    continue;
+
+                await DownloadSelectedAsync(
+                    candidate.Movie,
+                    candidate.Trailer,
+                    BuildOutputPath(candidate.Movie.Title, candidate.Movie.Year, config),
+                    "Downloading missing ranked-pool trailer").ConfigureAwait(false);
+            }
+
+            // Existing trailers migrate once to selector v2 metadata. Afterwards they only
+            // change when a configured structural/newer upgrade rule is satisfied.
+            foreach (var candidate in desired.Where(x => x.ExistingPath != null))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var existingPath = candidate.ExistingPath!;
+                existingByTmdbId[candidate.Movie.Id] = existingPath;
+                videosByTmdbId.TryGetValue(candidate.Movie.Id, out var availableVideos);
+                availableVideos ??= Array.Empty<TmdbVideo>();
+
+                var stored = ReadTrailerMetadata(existingPath);
+                TrailerUpgradeDecision? decision;
+
+                if (!config.SkipAlreadyDownloaded && availableVideos.Count > 0)
                 {
-                    downloaded++;
-                    existingByTmdbId[movie.Id] = outputPath;
-                    _logger.LogInformation(
-                        "|Trailers4Jellyfin| [{Attempt}/{Max}] Saved trailer for '{Movie}' ({Downloaded} successful) → {Path}",
-                        attempted, config.MaxTrailersToDownload, movie.Title, downloaded, outputPath);
+                    decision = new TrailerUpgradeDecision(
+                        availableVideos[0],
+                        "Re-downloading because Skip trailers already downloaded is Off");
                 }
+                else
+                {
+                    decision = TrailerVideoSelector.SelectUpgrade(
+                        stored,
+                        availableVideos,
+                        config.UpgradeHigherStructuralScore,
+                        config.UpgradeWhenNewerTrailerReleased);
+                }
+
+                if (decision == null || attempted >= config.MaxTrailersToDownload)
+                {
+                    await EnsureTrailerMetadataAsync(
+                        existingPath,
+                        candidate.Movie,
+                        genreMap,
+                        config.TmdbApiKey,
+                        cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+
+                await DownloadSelectedAsync(
+                    candidate.Movie,
+                    decision.Video,
+                    existingPath,
+                    decision.Reason).ConfigureAwait(false);
             }
 
             // Reconcile only after replacements are downloaded. Out-of-target and legacy files
@@ -494,12 +542,13 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
                 }
             }
 
-            await WriteTrailerMetadataAsync(trailerPath, movie, genreMap, apiKey, ct).ConfigureAwait(false);
+            await WriteTrailerMetadataAsync(trailerPath, movie, null, genreMap, apiKey, ct).ConfigureAwait(false);
         }
 
         private async Task WriteTrailerMetadataAsync(
             string trailerPath,
             TmdbMovieResult movie,
+            TmdbVideo? trailer,
             Dictionary<int, string> genreMap,
             string apiKey,
             CancellationToken ct)
@@ -514,16 +563,32 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
                 .ConfigureAwait(false);
 
             var sidecarPath = Path.ChangeExtension(trailerPath, ".json");
-            var json = JsonSerializer.Serialize(new
+            var metadata = new TrailerMetadata
             {
-                tmdbId = movie.Id,
-                title = movie.Title,
-                year = movie.Year,
-                popularity = movie.Popularity,
-                genres,
-                certifications,
-            });
-            await TrailerMetadataRefresh.WriteAsync(sidecarPath, json, ct).ConfigureAwait(false);
+                TmdbId = movie.Id,
+                Title = movie.Title,
+                Year = movie.Year,
+                Popularity = movie.Popularity,
+                Genres = genres.ToArray(),
+                Certifications = certifications,
+            };
+
+            if (trailer != null)
+            {
+                metadata.YoutubeKey = trailer.Key;
+                metadata.VideoName = trailer.Name;
+                metadata.VideoType = trailer.Type;
+                metadata.VideoOfficial = trailer.Official;
+                metadata.VideoSize = trailer.Size;
+                metadata.PublishedAt = trailer.PublishedAt;
+                metadata.VariantClass = TrailerVideoSelector.GetVariantClass(trailer).ToString();
+                metadata.StructuralScore = TrailerVideoSelector.GetStructuralScore(trailer);
+                metadata.SelectorVersion = TrailerVideoSelector.CurrentSelectorVersion;
+            }
+
+            await TrailerMetadataRefresh
+                .WriteAsync(sidecarPath, JsonSerializer.Serialize(metadata), ct)
+                .ConfigureAwait(false);
         }
 
         private async Task RefreshTrailerPopularitiesAsync(
@@ -647,6 +712,22 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
                 .Where(f => !Path.GetFileName(f).StartsWith("._", StringComparison.Ordinal))
                 .Where(f => !TrailerDownloadService.IsPartialDownloadArtifact(f))
                 .ToList();
+
+        private static TrailerMetadata? ReadTrailerMetadata(string trailerPath)
+        {
+            var sidecarPath = Path.ChangeExtension(trailerPath, ".json");
+            if (!File.Exists(sidecarPath))
+                return null;
+
+            try
+            {
+                return JsonSerializer.Deserialize<TrailerMetadata>(File.ReadAllText(sidecarPath));
+            }
+            catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+            {
+                return null;
+            }
+        }
 
         private static int? ReadTrailerTmdbId(string trailerPath)
         {

@@ -73,6 +73,13 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Configuration
 
         public int PreferredVideoHeight { get; set; } = 720;
         public bool SkipAlreadyDownloaded { get; set; } = true;
+
+        /// <summary>Replace an existing trailer when the selector finds a strictly higher structural score.</summary>
+        public bool UpgradeHigherStructuralScore { get; set; } = true;
+
+        /// <summary>Replace an existing trailer with a newer video only when its structural score is unchanged.</summary>
+        public bool UpgradeWhenNewerTrailerReleased { get; set; } = false;
+
         public bool SkipMoviesInLibrary { get; set; } = false;
         public string YtDlpPath { get; set; } = string.Empty;
 
