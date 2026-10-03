@@ -50,6 +50,15 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
         {
             try
             {
+                var config = Plugin.Instance?.Configuration;
+                if (config != null && ShouldSkipCinemaIntros(item, config))
+                {
+                    _logger.LogDebug(
+                        "|Trailers4Jellyfin| Skipping Cinema Mode intros because '{Item}' is itself a configured trailer/pre-roll asset",
+                        item.Name);
+                    return Enumerable.Empty<IntroInfo>();
+                }
+
                 if (item is Episode episode)
                     return await GetEpisodeIntrosAsync(episode, user).ConfigureAwait(false);
 
@@ -63,6 +72,14 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
                     "|Trailers4Jellyfin| GetIntros threw unexpectedly — returning no intros to protect playback");
                 return Enumerable.Empty<IntroInfo>();
             }
+        }
+
+        internal static bool ShouldSkipCinemaIntros(
+            BaseItem item,
+            Configuration.PluginConfiguration config)
+        {
+            return CinemaAssetRegistry.IsCinemaAsset(item)
+                || CinemaAssetRegistry.IsConfiguredCinemaPath(item.Path, config);
         }
 
         private async Task<IEnumerable<IntroInfo>> GetEpisodeIntrosAsync(Episode episode, User user)

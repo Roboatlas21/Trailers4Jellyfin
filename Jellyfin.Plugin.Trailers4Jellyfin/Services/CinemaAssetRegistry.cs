@@ -86,6 +86,50 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
             return item.ProviderIds?.ContainsKey(DownloadedTrailerProviderKey) == true;
         }
 
+        public static bool IsCinemaAsset(BaseItem item)
+        {
+            var providerIds = item.ProviderIds;
+            return providerIds != null
+                && (providerIds.ContainsKey(DownloadedTrailerProviderKey)
+                    || providerIds.ContainsKey(TrailerPreRollProviderKey)
+                    || providerIds.ContainsKey(FeaturePreRollProviderKey)
+                    || providerIds.ContainsKey(EpisodePreRollProviderKey));
+        }
+
+        internal static bool IsConfiguredCinemaPath(string? path, PluginConfiguration config)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                return false;
+
+            return IsPathWithinFolder(path, config.DownloadFolder)
+                || IsPathWithinFolder(path, config.TrailerPreRollFolder)
+                || IsPathWithinFolder(path, config.FeaturePreRollFolder)
+                || IsPathWithinFolder(path, config.EpisodePreRollFolder);
+        }
+
+        private static bool IsPathWithinFolder(string path, string? folder)
+        {
+            if (string.IsNullOrWhiteSpace(folder))
+                return false;
+
+            try
+            {
+                var fullPath = Path.GetFullPath(path);
+                var fullFolder = Path.GetFullPath(folder);
+                var relative = Path.GetRelativePath(fullFolder, fullPath);
+
+                if (Path.IsPathRooted(relative) || string.Equals(relative, "..", StringComparison.Ordinal))
+                    return false;
+
+                return !relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+                    && !relative.StartsWith(".." + Path.AltDirectorySeparatorChar, StringComparison.Ordinal);
+            }
+            catch (Exception ex) when (ex is ArgumentException or IOException or NotSupportedException)
+            {
+                return false;
+            }
+        }
+
         private IReadOnlyList<Video> SyncFolder(
             string? folder,
             string providerKey,

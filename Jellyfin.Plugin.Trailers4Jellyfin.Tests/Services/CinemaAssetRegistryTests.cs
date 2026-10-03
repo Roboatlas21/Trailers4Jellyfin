@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using Jellyfin.Plugin.Trailers4Jellyfin.Configuration;
 using Jellyfin.Plugin.Trailers4Jellyfin.Services;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
@@ -65,6 +66,58 @@ public sealed class CinemaAssetRegistryTests : IDisposable
         foreach (var name in new[] { "Film.temp.mp4", "Film.temp.f137.mp4", "Film.mp4.part", "Film.temp.json.tmp" })
             File.WriteAllText(Path.Combine(_directory, name), "partial");
         Assert.Empty(_registry.SyncDownloadedTrailers(_directory));
+    }
+
+    [Fact]
+    public void ConfiguredTrailerAndPrerollFoldersSuppressCinemaMode()
+    {
+        var config = new PluginConfiguration
+        {
+            DownloadFolder = Path.Combine(_directory, "trailers"),
+            TrailerPreRollFolder = Path.Combine(_directory, "trailer-prerolls"),
+            FeaturePreRollFolder = Path.Combine(_directory, "movie-prerolls"),
+            EpisodePreRollFolder = Path.Combine(_directory, "episode-prerolls"),
+        };
+
+        foreach (var folder in new[]
+                 {
+                     config.DownloadFolder,
+                     config.TrailerPreRollFolder,
+                     config.FeaturePreRollFolder,
+                     config.EpisodePreRollFolder,
+                 })
+        {
+            var nestedVideo = Path.Combine(folder, "nested", "clip.mp4");
+            Assert.True(CinemaAssetRegistry.IsConfiguredCinemaPath(nestedVideo, config));
+            Assert.True(TrailerIntroProvider.ShouldSkipCinemaIntros(
+                new Video { Path = nestedVideo },
+                config));
+        }
+
+        Assert.False(CinemaAssetRegistry.IsConfiguredCinemaPath(
+            Path.Combine(_directory, "movies", "feature.mkv"),
+            config));
+
+        // A similarly named sibling must not be mistaken for the configured trailer folder.
+        Assert.False(CinemaAssetRegistry.IsConfiguredCinemaPath(
+            Path.Combine(_directory, "trailers-old", "feature.mp4"),
+            config));
+    }
+
+    [Fact]
+    public void PrivateRegisteredCinemaAssetsSuppressCinemaMode()
+    {
+        var trailerFolder = Path.Combine(_directory, "trailers");
+        var trailerPath = Path.Combine(trailerFolder, "Trailer.mp4");
+        Directory.CreateDirectory(trailerFolder);
+        File.WriteAllText(trailerPath, "video");
+
+        var registered = Assert.Single(_registry.SyncDownloadedTrailers(trailerFolder));
+
+        Assert.True(CinemaAssetRegistry.IsCinemaAsset(registered));
+        Assert.True(TrailerIntroProvider.ShouldSkipCinemaIntros(
+            registered,
+            new PluginConfiguration()));
     }
 
     public void Dispose() => Directory.Delete(_directory, true);
