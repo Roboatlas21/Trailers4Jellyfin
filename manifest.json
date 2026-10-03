@@ -9,6 +9,14 @@
         "imageUrl": "https://raw.githubusercontent.com/Roboatlas21/Trailers4Jellyfin/main/Jellyfin.Plugin.Trailers4Jellyfin/Images/logo.svg",
         "versions": [
             {
+                "checksum": "0802fd5ba57cb4b9afa1638f331f28bd",
+                "changelog": "",
+                "targetAbi": "12.1.0.0",
+                "sourceUrl": "https://github.com/Roboatlas21/Trailers4Jellyfin/releases/download/v2.0.18.5/trailers4jellyfin_2.0.18.5.zip",
+                "timestamp": "2026-10-03T16:39:53Z",
+                "version": "2.0.18.5"
+            },
+            {
                 "checksum": "ef3b4af2ed2b34bbfe879bbae6c44a47",
                 "changelog": "",
                 "targetAbi": "12.1.0.0",
