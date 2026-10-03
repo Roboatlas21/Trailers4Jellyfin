@@ -13,7 +13,15 @@ using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
 {
-    public record TmdbVideo(string Key, string Name, string Language, bool Official, int Size);
+    public record TmdbVideo(
+        string Key,
+        string Name,
+        string Language,
+        bool Official,
+        int Size,
+        string Type = "Trailer",
+        DateTimeOffset? PublishedAt = null,
+        int ReturnOrder = int.MaxValue);
 
     [Flags]
     public enum TmdbMovieSource
@@ -712,7 +720,7 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
             try
             {
                 // include_video_language tells TMDB to return videos beyond its en-US default.
-                // Without it, only English trailers are returned regardless of iso_639_1 filtering.
+                // Without it, only English videos are returned regardless of iso_639_1 filtering.
                 var includeLangs = (allowedLanguages != null && allowedLanguages.Count > 0)
                     ? string.Join(",", allowedLanguages)
                     : AllSupportedLanguageCodes;
@@ -726,34 +734,67 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
                 using var doc = JsonDocument.Parse(json);
 
                 var videos = new List<TmdbVideo>();
+                var returnOrder = 0;
                 foreach (var result in doc.RootElement.GetProperty("results").EnumerateArray())
                 {
-                    var type = result.GetProperty("type").GetString();
-                    var site = result.GetProperty("site").GetString();
-                    if (!string.Equals(type, "Trailer", StringComparison.OrdinalIgnoreCase)
-                        || !string.Equals(site, "YouTube", StringComparison.OrdinalIgnoreCase))
+                    returnOrder++;
+
+                    var site = result.TryGetProperty("site", out var siteValue)
+                        ? siteValue.GetString()
+                        : null;
+                    if (!string.Equals(site, "YouTube", StringComparison.OrdinalIgnoreCase))
                         continue;
 
-                    var key = result.GetProperty("key").GetString();
-                    if (string.IsNullOrEmpty(key)) continue;
+                    var key = result.TryGetProperty("key", out var keyValue)
+                        ? keyValue.GetString()
+                        : null;
+                    if (string.IsNullOrWhiteSpace(key))
+                        continue;
 
-                    var lang = result.TryGetProperty("iso_639_1", out var l) ? (l.GetString() ?? string.Empty) : string.Empty;
-
+                    var lang = result.TryGetProperty("iso_639_1", out var languageValue)
+                        ? languageValue.GetString() ?? string.Empty
+                        : string.Empty;
                     if (allowedLanguages != null && allowedLanguages.Count > 0 && !allowedLanguages.Contains(lang))
                         continue;
 
+                    var type = result.TryGetProperty("type", out var typeValue)
+                        ? typeValue.GetString() ?? string.Empty
+                        : string.Empty;
+                    var name = result.TryGetProperty("name", out var nameValue)
+                        ? nameValue.GetString() ?? type
+                        : type;
+                    var official = result.TryGetProperty("official", out var officialValue)
+                        && officialValue.ValueKind is JsonValueKind.True or JsonValueKind.False
+                        && officialValue.GetBoolean();
+                    var size = result.TryGetProperty("size", out var sizeValue)
+                        && sizeValue.TryGetInt32(out var parsedSize)
+                            ? parsedSize
+                            : 0;
+
+                    DateTimeOffset? publishedAt = null;
+                    if (result.TryGetProperty("published_at", out var publishedValue)
+                        && publishedValue.ValueKind == JsonValueKind.String
+                        && DateTimeOffset.TryParse(
+                            publishedValue.GetString(),
+                            CultureInfo.InvariantCulture,
+                            DateTimeStyles.AssumeUniversal,
+                            out var parsedPublishedAt))
+                    {
+                        publishedAt = parsedPublishedAt;
+                    }
+
                     videos.Add(new TmdbVideo(
                         key,
-                        result.GetProperty("name").GetString() ?? "Trailer",
+                        string.IsNullOrWhiteSpace(name) ? "Video" : name,
                         lang,
-                        result.GetProperty("official").GetBoolean(),
-                        result.GetProperty("size").GetInt32()));
+                        official,
+                        size,
+                        type,
+                        publishedAt,
+                        returnOrder));
                 }
 
-                return videos
-                    .OrderByDescending(v => v.Official)
-                    .ThenByDescending(v => v.Size)
-                    .ToList();
+                return TrailerVideoSelector.OrderCandidates(videos).ToList();
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
