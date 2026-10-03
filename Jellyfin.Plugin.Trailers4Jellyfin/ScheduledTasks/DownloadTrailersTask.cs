@@ -271,6 +271,7 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
 
             progress.Report(25);
 
+            int attempted = 0;
             int downloaded = 0;
             int processed = 0;
 
@@ -278,7 +279,7 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                if (downloaded >= config.MaxTrailersToDownload)
+                if (attempted >= config.MaxTrailersToDownload)
                     break;
 
                 var movie = candidate.Movie;
@@ -319,7 +320,10 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
                     trailer = trailers[0];
                 }
 
-                _logger.LogInformation("|Trailers4Jellyfin| Downloading '{Trailer}' for '{Movie}'", trailer.Name, movie.Title);
+                attempted++;
+                _logger.LogInformation(
+                    "|Trailers4Jellyfin| [{Attempt}/{Max}] Downloading '{Trailer}' for '{Movie}'",
+                    attempted, config.MaxTrailersToDownload, trailer.Name, movie.Title);
 
                 var success = await TrailerDownloadService.DownloadAndPublishAsync(
                     outputPath,
@@ -339,8 +343,8 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
                     downloaded++;
                     existingByTmdbId[movie.Id] = outputPath;
                     _logger.LogInformation(
-                        "|Trailers4Jellyfin| [{Done}/{Max}] Saved trailer for '{Movie}' → {Path}",
-                        downloaded, config.MaxTrailersToDownload, movie.Title, outputPath);
+                        "|Trailers4Jellyfin| [{Attempt}/{Max}] Saved trailer for '{Movie}' ({Downloaded} successful) → {Path}",
+                        attempted, config.MaxTrailersToDownload, movie.Title, downloaded, outputPath);
                 }
             }
 
@@ -351,8 +355,8 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
             _assetRegistry.SyncDownloadedTrailers(config.DownloadFolder);
 
             _logger.LogInformation(
-                "|Trailers4Jellyfin| Task complete. Downloaded {Count} trailer(s); trailer-capable desired pool size {Desired}.",
-                downloaded, desired.Count);
+                "|Trailers4Jellyfin| Task complete. Attempted {Attempted} candidate(s), downloaded {Downloaded} trailer(s); trailer-capable desired pool size {Desired}.",
+                attempted, downloaded, desired.Count);
             progress.Report(100);
         }
 

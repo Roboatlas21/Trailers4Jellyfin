@@ -204,7 +204,7 @@ Results are merged and deduplicated by TMDB movie ID. The final pool is ranked b
 |---|---:|---|
 | **TMDB API Key** | — | TMDB v3 API key or read-access token |
 | **Downloaded Trailer Folder** | — | Where downloaded trailers and metadata sidecars are stored |
-| **Max trailers per run** | 20 | Maximum successful new downloads in one scheduled run |
+| **Max trailers per run** | 20 | Maximum trailer candidates attempted in one scheduled run; a failed candidate still consumes one slot, while its automatic retry does not |
 | **Pages per source** | 3 | TMDB pages fetched from each enabled source |
 | **Minimum movie budget** | $10,000,000 | Reliable known budgets below this amount are excluded |
 | **Budget metadata sanity floor** | $1,000 | Positive budgets below this value are treated as unreliable/unknown and allowed |
@@ -229,7 +229,7 @@ Each scheduled run:
 3. Keeps scanning below the nominal top 100 whenever a movie has no suitable TMDB/YouTube trailer, until the desired pool contains 100 trailer-capable movies or the candidate list is exhausted.
 4. Existing local trailers count as trailer-capable immediately; missing movies must currently expose a suitable trailer before they can reserve a pool slot.
 5. Keeps already-downloaded trailers whose TMDB IDs are still in that desired pool.
-6. Downloads up to the per-run limit of missing desired trailers.
+6. Attempts up to the per-run limit of missing desired trailers. A failed candidate still consumes one per-run slot; its automatic yt-dlp retry does not consume a second slot.
 7. If the folder is over the configured pool size, retires old out-of-target, duplicate or unidentified legacy files first.
 
 A transient yt-dlp/download failure does not immediately blacklist a movie: if TMDB still advertises a suitable trailer, that movie remains in the desired set and is retried on a later run. Movies with no suitable TMDB trailer do not reserve slots.

@@ -426,8 +426,9 @@
                             <label class="inputLabel inputLabelUnfocused" for="max-trailers">Max trailers downloaded per run</label>
                             <input type="number" id="max-trailers" is="emby-input" min="1" max="200" />
                             <div class="fieldDescription">
-                                Maximum number of successful new downloads during one scheduled task run.
-                                Skipped, unavailable, filtered, or failed trailers do not consume the limit. Default: 20.
+                                Maximum number of trailer candidates attempted during one scheduled task run.
+                                A failed candidate still consumes one slot; its automatic yt-dlp retry does not consume another.
+                                Already-downloaded trailers that are skipped do not consume the limit. Default: 20.
                             </div>
                         </div>
                         <div class="inputContainer">
