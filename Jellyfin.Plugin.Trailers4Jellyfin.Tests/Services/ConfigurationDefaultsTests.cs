@@ -69,6 +69,10 @@ public sealed class ConfigurationDefaultsTests
         Assert.Equal(14, config.EpisodeCommercialOnlyChancePercent);
         Assert.Equal(6, config.EpisodeMovieTrailerOnlyChancePercent);
         Assert.Equal(0, config.EpisodeBothChancePercent);
+        Assert.Equal(6.8, config.MatureReleasedMinimumRating);
+        Assert.Equal(500, config.MatureReleasedMinimumVotes);
+        Assert.Equal(6.8, config.ProvenQualityMinimumRating);
+        Assert.Equal(1_000, config.ProvenQualityMinimumVotes);
         Assert.Equal(TrailerPoolRankingMode.LifecycleScore, config.PoolRankingMode);
         Assert.Equal(TrailerPlaybackRankingMode.Score, config.PlaybackRankingMode);
         Assert.True(config.ApplyPlaybackReleaseBoost);

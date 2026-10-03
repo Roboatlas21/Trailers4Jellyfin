@@ -127,6 +127,18 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Configuration
         /// <summary>Add the release-proximity boost to PoolScore when score playback is enabled.</summary>
         public bool ApplyPlaybackReleaseBoost { get; set; } = true;
 
+        /// <summary>Minimum rating required once a released movie reaches full maturity.</summary>
+        public double MatureReleasedMinimumRating { get; set; } = 6.8;
+
+        /// <summary>Minimum vote count required once a released movie reaches full maturity.</summary>
+        public int MatureReleasedMinimumVotes { get; set; } = 500;
+
+        /// <summary>Minimum rating required for the proven-quality score floor.</summary>
+        public double ProvenQualityMinimumRating { get; set; } = 6.8;
+
+        /// <summary>Minimum vote count required for the proven-quality score floor.</summary>
+        public int ProvenQualityMinimumVotes { get; set; } = 1_000;
+
         // ── Trailer Rotation ──────────────────────────────────────────────────
 
         /// <summary>Desired size of the current ranked trailer pool. 0 = unlimited.</summary>

@@ -76,6 +76,63 @@ public sealed class TrailerRankingServiceTests
         Assert.Contains("6-month upcoming window", restricted.ExclusionReason, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Evaluate_MatureReleasedThresholdsUseConfiguredSettings()
+    {
+        var service = new TrailerRankingService();
+        var releaseDate = Today.AddDays(-180);
+        var candidate = Candidate(
+            releaseDate,
+            TmdbMovieSource.Popular,
+            popularity: 500.0,
+            voteCount: 499,
+            rating: 6.7);
+        var config = StrongDefaults();
+
+        var calibrated = service.Evaluate(candidate, config, Today);
+        Assert.False(calibrated.LifecyclePoolEligible);
+        Assert.Contains("released rating", calibrated.ExclusionReason, StringComparison.Ordinal);
+        Assert.Contains("released votes", calibrated.ExclusionReason, StringComparison.Ordinal);
+
+        config.MatureReleasedMinimumRating = 6.7;
+        config.MatureReleasedMinimumVotes = 499;
+
+        var relaxed = service.Evaluate(candidate, config, Today);
+        Assert.True(relaxed.LifecyclePoolEligible, relaxed.ExclusionReason);
+    }
+
+    [Fact]
+    public void Evaluate_ProvenQualityThresholdsUseConfiguredSettings()
+    {
+        var service = new TrailerRankingService();
+        var releaseDate = Today.AddDays(-240);
+        var config = StrongDefaults();
+        config.MatureReleasedMinimumRating = 6.5;
+
+        var ratingCandidate = Candidate(
+            releaseDate,
+            TmdbMovieSource.Popular,
+            popularity: 500.0,
+            voteCount: 1_000,
+            rating: 6.7);
+
+        Assert.Equal(0.0, service.Evaluate(ratingCandidate, config, Today).ProvenQualityFloor);
+        config.ProvenQualityMinimumRating = 6.7;
+        Assert.True(service.Evaluate(ratingCandidate, config, Today).ProvenQualityFloor > 0.0);
+
+        var votesCandidate = Candidate(
+            releaseDate,
+            TmdbMovieSource.Popular,
+            popularity: 500.0,
+            voteCount: 999,
+            rating: 7.5);
+
+        config.ProvenQualityMinimumRating = 6.8;
+        Assert.Equal(0.0, service.Evaluate(votesCandidate, config, Today).ProvenQualityFloor);
+        config.ProvenQualityMinimumVotes = 999;
+        Assert.True(service.Evaluate(votesCandidate, config, Today).ProvenQualityFloor > 0.0);
+    }
+
     [Theory]
     [InlineData(-120, 0.0)]
     [InlineData(-90, 2.0)]
@@ -102,18 +159,27 @@ public sealed class TrailerRankingServiceTests
         InTheatresMinimumRating = 6.5,
         ReleaseDateRangeMonths = 12,
         UpcomingReleaseDateRangeMonths = 6,
+        MatureReleasedMinimumRating = 6.8,
+        MatureReleasedMinimumVotes = 500,
+        ProvenQualityMinimumRating = 6.8,
+        ProvenQualityMinimumVotes = 1_000,
     };
 
-    private static TrailerRankingCandidate Candidate(DateOnly releaseDate, TmdbMovieSource source)
+    private static TrailerRankingCandidate Candidate(
+        DateOnly releaseDate,
+        TmdbMovieSource source,
+        double popularity = 500.0,
+        int voteCount = 10_000,
+        double rating = 9.0)
     {
         var movie = new TmdbMovieResult(
             999,
             "Regression Movie",
             releaseDate.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture),
             new[] { 28 },
-            500.0,
-            10_000,
-            9.0,
+            popularity,
+            voteCount,
+            rating,
             source);
 
         return new TrailerRankingCandidate(

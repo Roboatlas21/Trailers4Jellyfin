@@ -21,7 +21,6 @@ public sealed class TrailerRankingService
     private const double MajorUpcomingMaximumBoost = 8.0;
 
     private const double RatingConfidencePriorVotes = 300.0;
-    private const int ProvenQualityMinimumVotes = 1_000;
     private const double LowVoteFullConfidenceVotes = 1_000.0;
     private const double LowVoteTransitionVotes = 700.0;
     private const double LowVoteQualityCapReduction = 40.0;
@@ -145,8 +144,10 @@ public sealed class TrailerRankingService
         else if (t >= 0)
         {
             var maturity = SmoothStep(Clamp((t.Value - 45.0) / 135.0, 0.0, 1.0));
-            var minimumRating = 6.0 + (0.8 * maturity);
-            var minimumVotes = 100.0 + (400.0 * maturity);
+            var matureMinimumRating = Clamp(config.MatureReleasedMinimumRating, 0.0, 10.0);
+            var matureMinimumVotes = Math.Max(0, config.MatureReleasedMinimumVotes);
+            var minimumRating = 6.0 + ((matureMinimumRating - 6.0) * maturity);
+            var minimumVotes = 100.0 + ((matureMinimumVotes - 100.0) * maturity);
 
             if (movie.VoteAverage < minimumRating)
                 reasons.Add($"released rating {movie.VoteAverage:F3} < {minimumRating:F3}");
@@ -212,7 +213,11 @@ public sealed class TrailerRankingService
         rawScore += majorUpcomingBoost;
 
         var provenQualityFloor = 0.0;
-        if (t >= 0 && movie.VoteCount >= ProvenQualityMinimumVotes && movie.VoteAverage >= 6.8)
+        var provenQualityMinimumVotes = Math.Max(0, config.ProvenQualityMinimumVotes);
+        var provenQualityMinimumRating = Clamp(config.ProvenQualityMinimumRating, 0.0, 10.0);
+        if (t >= 0
+            && movie.VoteCount >= provenQualityMinimumVotes
+            && movie.VoteAverage >= provenQualityMinimumRating)
         {
             var ageMaturity = Sigmoid((t.Value - 120.0) / 45.0);
             var qualityStrength = Sigmoid((q - 65.0) / 7.0);

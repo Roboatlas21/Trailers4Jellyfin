@@ -564,6 +564,40 @@
                                 Movies without a usable trailer do not reserve a pool slot. Set to 0 for unlimited. Default: 100.
                             </div>
                         </div>
+
+                        <h4>Advanced Ranking</h4>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="mature-released-min-rating">Mature released minimum rating</label>
+                            <input type="number" id="mature-released-min-rating" is="emby-input" min="0" max="10" step="0.1" required />
+                            <div class="fieldDescription">
+                                Minimum rating reached gradually as a released movie ages. The lifecycle model ramps from 6.0
+                                for newer releases to this value by about 6 months after release. Default: 6.8.
+                            </div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="mature-released-min-votes">Mature released minimum votes</label>
+                            <input type="number" id="mature-released-min-votes" is="emby-input" min="0" max="10000000" step="1" required />
+                            <div class="fieldDescription">
+                                Minimum vote count reached gradually as a released movie ages. The lifecycle model ramps from
+                                100 votes for newer releases to this value by about 6 months after release. Default: 500.
+                            </div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="proven-quality-min-rating">Proven-quality minimum rating</label>
+                            <input type="number" id="proven-quality-min-rating" is="emby-input" min="0" max="10" step="0.1" required />
+                            <div class="fieldDescription">
+                                Released movies at or above this rating may receive the proven-quality score floor when they
+                                also meet the vote requirement. Default: 6.8.
+                            </div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="proven-quality-min-votes">Proven-quality minimum votes</label>
+                            <input type="number" id="proven-quality-min-votes" is="emby-input" min="0" max="10000000" step="1" required />
+                            <div class="fieldDescription">
+                                Vote count required before a released movie can receive proven-quality protection. Default: 1,000.
+                            </div>
+                        </div>
+
                         <p class="fieldDescription">
                             <strong>Score playback:</strong> the selected direct/related genre group is ranked by number of matching
                             genres first, then PlaybackScore (or PoolScore when the release boost is off), PoolScore, popularity, and TMDB ID.
@@ -712,6 +746,10 @@
                     document.getElementById('playback-ranking-mode').value   = String(readEnum(config.PlaybackRankingMode, { Score: 0, Popularity: 1 }, 0));
                     document.getElementById('apply-playback-release-boost').checked = config.ApplyPlaybackReleaseBoost !== false;
                     document.getElementById('theatrical-region').value       = (config.TheatricalRegion || 'US').toUpperCase();
+                    document.getElementById('mature-released-min-rating').value = config.MatureReleasedMinimumRating ?? 6.8;
+                    document.getElementById('mature-released-min-votes').value = config.MatureReleasedMinimumVotes ?? 500;
+                    document.getElementById('proven-quality-min-rating').value = config.ProvenQualityMinimumRating ?? 6.8;
+                    document.getElementById('proven-quality-min-votes').value = config.ProvenQualityMinimumVotes ?? 1000;
                     Dashboard.hideLoadingMsg();
                 });
             });
@@ -801,6 +839,10 @@
                     config.PlaybackRankingMode     = parseInt(document.getElementById('playback-ranking-mode').value, 10) || 0;
                     config.ApplyPlaybackReleaseBoost = document.getElementById('apply-playback-release-boost').checked;
                     config.TheatricalRegion        = (document.getElementById('theatrical-region').value || 'US').trim().toUpperCase();
+                    config.MatureReleasedMinimumRating = readDecimal('mature-released-min-rating', 6.8);
+                    config.MatureReleasedMinimumVotes = readNumber('mature-released-min-votes', 500);
+                    config.ProvenQualityMinimumRating = readDecimal('proven-quality-min-rating', 6.8);
+                    config.ProvenQualityMinimumVotes = readNumber('proven-quality-min-votes', 1000);
                     ApiClient.updatePluginConfiguration(pluginId, config)
                         .then(Dashboard.processPluginConfigurationUpdateResult);
                 });
