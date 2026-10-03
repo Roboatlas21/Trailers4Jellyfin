@@ -504,7 +504,30 @@
                                 <span>Skip trailers already downloaded</span>
                             </label>
                             <div class="fieldDescription checkboxFieldDescription">
-                                Reuse an existing downloaded trailer instead of downloading it again. Default: On.
+                                Reuse an existing downloaded trailer unless a one-time selector migration or an enabled trailer-upgrade rule
+                                chooses a replacement. Default: On.
+                            </div>
+                        </div>
+
+                        <h4>Trailer Upgrades</h4>
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="upgrade-higher-structural-score" />
+                                <span>Upgrade when a higher structural score is available</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Replace an existing trailer when TMDB offers a materially better video, such as a higher-resolution
+                                genuine trailer or a better variant at the same resolution. Default: On.
+                            </div>
+                        </div>
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="upgrade-newer-trailer" />
+                                <span>Upgrade when a newer trailer is released</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                When the structural score is unchanged, replace the installed video if TMDB publishes a newer candidate.
+                                A newer lower-score video never replaces a better existing trailer. Default: Off.
                             </div>
                         </div>
                     </fieldset>
@@ -733,6 +756,8 @@
                     document.getElementById('video-quality').value          = String(config.PreferredVideoHeight ?? 720);
                     document.getElementById('skip-library').checked         = !!config.SkipMoviesInLibrary;
                     document.getElementById('skip-downloaded').checked      = config.SkipAlreadyDownloaded !== false;
+                    document.getElementById('upgrade-higher-structural-score').checked = config.UpgradeHigherStructuralScore !== false;
+                    document.getElementById('upgrade-newer-trailer').checked = config.UpgradeWhenNewerTrailerReleased === true;
                     document.getElementById('ytdlp-path').value             = config.YtDlpPath || '';
                     document.getElementById('ffmpeg-path').value            = config.FfmpegPath || '';
                     document.getElementById('cookies-file').value           = config.CookiesFilePath || '';
@@ -825,6 +850,8 @@
                     config.PreferredVideoHeight   = parseInt(document.getElementById('video-quality').value, 10) || 720;
                     config.SkipMoviesInLibrary    = document.getElementById('skip-library').checked;
                     config.SkipAlreadyDownloaded  = document.getElementById('skip-downloaded').checked;
+                    config.UpgradeHigherStructuralScore = document.getElementById('upgrade-higher-structural-score').checked;
+                    config.UpgradeWhenNewerTrailerReleased = document.getElementById('upgrade-newer-trailer').checked;
                     config.YtDlpPath              = document.getElementById('ytdlp-path').value;
                     config.FfmpegPath             = document.getElementById('ffmpeg-path').value;
                     config.CookiesFilePath        = document.getElementById('cookies-file').value;

@@ -87,6 +87,26 @@ public sealed class TrailerVideoSelectorTests
     }
 
     [Fact]
+    public void FallbackOrderIsSpecialLookThenTvSpotThenSneakPeekThenClipThenFeaturetteThenTicketAd()
+    {
+        var videos = new[]
+        {
+            Video("ticket", "Get Tickets Now", 2160, "Trailer", DateTimeOffset.UtcNow),
+            Video("featurette", "Making Of Featurette", 2160, "Featurette", DateTimeOffset.UtcNow),
+            Video("clip", "Official Clip", 2160, "Clip", DateTimeOffset.UtcNow),
+            Video("sneak", "Sneak Peek", 2160, "Trailer", DateTimeOffset.UtcNow),
+            Video("spot", "Official TV Spot", 480, "Trailer", DateTimeOffset.UtcNow),
+            Video("special", "Special Look", 480, "Featurette", DateTimeOffset.UtcNow),
+        };
+
+        var ordered = TrailerVideoSelector.OrderCandidates(videos);
+
+        Assert.Equal(
+            new[] { "special", "spot", "sneak", "clip", "featurette", "ticket" },
+            ordered.Select(v => v.Key).ToArray());
+    }
+
+    [Fact]
     public void LegacyMetadataAlwaysGetsOneTimeRefresh()
     {
         var best = Video("best", "Official Trailer", 1080, "Trailer", DateTimeOffset.UtcNow);

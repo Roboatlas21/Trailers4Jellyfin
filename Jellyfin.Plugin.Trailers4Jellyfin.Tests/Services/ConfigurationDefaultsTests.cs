@@ -63,6 +63,8 @@ public sealed class ConfigurationDefaultsTests
         Assert.Equal(45, config.MinimumMovieRuntimeMinutes);
         Assert.False(config.SkipMoviesInLibrary);
         Assert.True(config.SkipAlreadyDownloaded);
+        Assert.True(config.UpgradeHigherStructuralScore);
+        Assert.False(config.UpgradeWhenNewerTrailerReleased);
         Assert.Equal(100, config.MaxTotalTrailers);
         Assert.Equal(20, config.MaxTrailersToDownload);
         Assert.Equal(4, config.MaxPagesPerSource);
