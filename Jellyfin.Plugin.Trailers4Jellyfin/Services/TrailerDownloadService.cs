@@ -330,8 +330,9 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
                     if (attempt == 1)
                     {
                         _logger.LogWarning(
-                            "|Trailers4Jellyfin| yt-dlp failed for {Key}; retrying once",
+                            "|Trailers4Jellyfin| yt-dlp failed for {Key}; retrying once after 10-second cooldown",
                             key);
+                        await Task.Delay(TimeSpan.FromSeconds(10), ct).ConfigureAwait(false);
                     }
                 }
 

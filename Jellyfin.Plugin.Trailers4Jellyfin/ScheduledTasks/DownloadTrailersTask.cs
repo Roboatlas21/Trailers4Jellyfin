@@ -320,6 +320,15 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
                     trailer = trailers[0];
                 }
 
+                if (attempted > 0)
+                {
+                    var delaySeconds = Random.Shared.Next(3, 9);
+                    _logger.LogInformation(
+                        "|Trailers4Jellyfin| Waiting {DelaySeconds} second(s) before next YouTube trailer download",
+                        delaySeconds);
+                    await Task.Delay(TimeSpan.FromSeconds(delaySeconds), cancellationToken).ConfigureAwait(false);
+                }
+
                 attempted++;
                 _logger.LogInformation(
                     "|Trailers4Jellyfin| [{Attempt}/{Max}] Downloading '{Trailer}' for '{Movie}'",
