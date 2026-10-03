@@ -222,8 +222,6 @@ A transient yt-dlp/download failure does not immediately blacklist a movie: if T
 
 Sidecars contain the stable TMDB movie ID, so title changes do not break reconciliation. Legacy files without an ID are matched by their existing title/year filename when they are encountered as a desired candidate and have their sidecar upgraded; otherwise they age out gradually as ranked replacements arrive. This avoids deleting a full legacy pool before the 20-per-run replacement limit can refill it.
 
-The optional **Delete watched trailers** behavior remains available and runs before ranked reconciliation.
-
 ## Running the task
 
 Go to **Admin → Scheduled Tasks → Trailers4Jellyfin → Download TMDB Trailers** and run it.

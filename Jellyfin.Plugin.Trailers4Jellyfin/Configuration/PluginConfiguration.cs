@@ -83,9 +83,6 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Configuration
         /// <summary>Desired size of the current ranked trailer pool. 0 = unlimited.</summary>
         public int MaxTotalTrailers { get; set; } = 100;
 
-        /// <summary>Delete trailers that any user has already watched, making room for fresh ones.</summary>
-        public bool DeleteWatchedTrailers { get; set; } = false;
-
         // ── Advanced ──────────────────────────────────────────────────────────
 
         /// <summary>

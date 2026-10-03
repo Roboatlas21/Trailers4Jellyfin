@@ -66,8 +66,6 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
     {
         private readonly ILogger<DownloadTrailersTask> _logger;
         private readonly ILibraryManager _libraryManager;
-        private readonly IUserManager _userManager;
-        private readonly IUserDataManager _userDataManager;
         private readonly TmdbService _tmdbService;
         private readonly TrailerDownloadService _downloadService;
         private readonly CinemaAssetRegistry _assetRegistry;
@@ -80,16 +78,12 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
         public DownloadTrailersTask(
             ILogger<DownloadTrailersTask> logger,
             ILibraryManager libraryManager,
-            IUserManager userManager,
-            IUserDataManager userDataManager,
             TmdbService tmdbService,
             TrailerDownloadService downloadService,
             CinemaAssetRegistry assetRegistry)
         {
             _logger = logger;
             _libraryManager = libraryManager;
-            _userManager = userManager;
-            _userDataManager = userDataManager;
             _tmdbService = tmdbService;
             _downloadService = downloadService;
             _assetRegistry = assetRegistry;
@@ -146,12 +140,6 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
             {
                 _logger.LogWarning("|Trailers4Jellyfin| No TMDB sources selected. Enable at least one source. Skipping task.");
                 return;
-            }
-
-            if (config.DeleteWatchedTrailers)
-            {
-                DeleteWatchedTrailers(config, registeredTrailers);
-                registeredTrailers = _assetRegistry.SyncDownloadedTrailers(config.DownloadFolder);
             }
 
             progress.Report(5);
@@ -456,26 +444,6 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
                 {
                     _logger.LogWarning(ex, "|Trailers4Jellyfin| Could not delete partial download {File}", Path.GetFileName(partial));
                 }
-            }
-        }
-
-        private void DeleteWatchedTrailers(
-            Configuration.PluginConfiguration config,
-            IReadOnlyList<Video> registeredTrailers)
-        {
-            var trailerItemsByPath = registeredTrailers
-                .Where(t => !string.IsNullOrWhiteSpace(t.Path))
-                .ToDictionary(t => Path.GetFullPath(t.Path!), CinemaAssetRegistry.PathComparer);
-
-            var users = _userManager.GetUsers().ToList();
-            foreach (var file in GetTrailerFiles(config.DownloadFolder))
-            {
-                if (!trailerItemsByPath.TryGetValue(Path.GetFullPath(file), out var item)) continue;
-                bool watched = users.Any(u => _userDataManager.GetUserData(u, item)?.Played == true);
-                if (!watched) continue;
-
-                _logger.LogInformation("|Trailers4Jellyfin| Deleting watched trailer: {File}", Path.GetFileName(file));
-                DeleteTrailerAndSidecar(file);
             }
         }
 

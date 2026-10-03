@@ -459,16 +459,6 @@
                             </div>
                         </div>
 
-                        <div class="checkboxContainer checkboxContainer-withDescription">
-                            <label>
-                                <input is="emby-checkbox" type="checkbox" id="delete-watched" />
-                                <span>Delete watched trailers</span>
-                            </label>
-                            <div class="fieldDescription checkboxFieldDescription">
-                                Trailers that any user has already watched will be deleted at the start of each
-                                download run, keeping the pool fresh.
-                            </div>
-                        </div>
                     </fieldset>
 
                     <!-- Advanced -->
@@ -600,7 +590,6 @@
                             document.getElementById('lang-' + code).checked = langs.length === 0 || langs.indexOf(code) !== -1;
                         });
                     document.getElementById('max-total-trailers').value     = config.MaxTotalTrailers ?? 100;
-                    document.getElementById('delete-watched').checked       = !!config.DeleteWatchedTrailers;
                     Dashboard.hideLoadingMsg();
                 });
             });
@@ -659,7 +648,6 @@
                     // If all are checked treat it as "no preference" (empty string)
                     config.AllowedLanguages       = checkedLangs.length === allLangCodes.length ? '' : checkedLangs.join(',');
                     config.MaxTotalTrailers       = parseInt(document.getElementById('max-total-trailers').value, 10) ?? 100;
-                    config.DeleteWatchedTrailers  = document.getElementById('delete-watched').checked;
                     ApiClient.updatePluginConfiguration(pluginId, config)
                         .then(Dashboard.processPluginConfigurationUpdateResult);
                 });
