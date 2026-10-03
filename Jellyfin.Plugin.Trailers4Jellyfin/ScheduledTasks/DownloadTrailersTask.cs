@@ -28,7 +28,7 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
 
         public string Name => "Download TMDB Trailers";
         public string Key => "Trailers4JellyfinDownload";
-        public string Description => "Downloads trailers from TMDB for upcoming and recently released movies not in your library, for use with Jellyfin Cinema Mode.";
+        public string Description => "Builds and reconciles a ranked TMDB trailer pool for Jellyfin Cinema Mode.";
         public string Category => "Trailers4Jellyfin";
 
         public DownloadTrailersTask(
@@ -75,6 +75,7 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
             }
 
             Directory.CreateDirectory(config.DownloadFolder);
+            CleanupPartialDownloads(config.DownloadFolder);
 
             var registeredTrailers = _assetRegistry.SyncDownloadedTrailers(config.DownloadFolder);
 
@@ -101,17 +102,20 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
                 return;
             }
 
-            CleanupTrailers(config, registeredTrailers);
-            _assetRegistry.SyncDownloadedTrailers(config.DownloadFolder);
+            if (config.DeleteWatchedTrailers)
+            {
+                DeleteWatchedTrailers(config, registeredTrailers);
+                registeredTrailers = _assetRegistry.SyncDownloadedTrailers(config.DownloadFolder);
+            }
+
             progress.Report(5);
 
             var libraryTmdbIds = config.SkipMoviesInLibrary
                 ? GetLibraryTmdbIds()
                 : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            _logger.LogInformation("|Trailers4Jellyfin| Library contains {Count} movies with TMDB IDs (will skip these)", libraryTmdbIds.Count);
-
-            progress.Report(10);
+            if (config.SkipMoviesInLibrary)
+                _logger.LogInformation("|Trailers4Jellyfin| Library contains {Count} movies with TMDB IDs (will skip these)", libraryTmdbIds.Count);
 
             var allowedLanguages = string.IsNullOrWhiteSpace(config.AllowedLanguages)
                 ? null
@@ -119,62 +123,114 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
                     config.AllowedLanguages.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
                     StringComparer.OrdinalIgnoreCase) as IReadOnlySet<string>;
 
-            _logger.LogInformation("|Trailers4Jellyfin| Fetching candidates from TMDB...");
+            progress.Report(10);
+            _logger.LogInformation("|Trailers4Jellyfin| Fetching ranked candidates from TMDB...");
             var candidates = await _tmdbService.GetCandidateMoviesAsync(config, cancellationToken).ConfigureAwait(false);
-            _logger.LogInformation("|Trailers4Jellyfin| Found {Count} candidate movies across all sources", candidates.Count);
-
-            // Fetch genre ID→name map once for sidecar metadata.
-            var genreMap = await _tmdbService.GetGenreMapAsync(config.TmdbApiKey, cancellationToken).ConfigureAwait(false);
-
-            progress.Report(20);
 
             if (config.SkipMoviesInLibrary)
             {
                 candidates = candidates
                     .Where(m => !libraryTmdbIds.Contains(m.Id.ToString()))
                     .ToList();
-                _logger.LogInformation("|Trailers4Jellyfin| {Count} candidates remain after filtering library movies", candidates.Count);
             }
+
+            _logger.LogInformation("|Trailers4Jellyfin| {Count} ranked candidates remain after source/library filters", candidates.Count);
 
             if (candidates.Count == 0)
             {
-                _logger.LogInformation("|Trailers4Jellyfin| No new candidates to download. All done.");
+                _logger.LogInformation("|Trailers4Jellyfin| No eligible candidates found. All done.");
                 progress.Report(100);
                 return;
             }
 
+            // Budget and runtime live on /movie/{id}, not list/discover responses.
+            // Walk the already-ranked list only until the desired pool is full.
+            int desiredLimit = config.MaxTotalTrailers > 0 ? config.MaxTotalTrailers : candidates.Count;
+            var desired = new List<TmdbMovieResult>(Math.Min(desiredLimit, candidates.Count));
+
+            foreach (var movie in candidates)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var details = await _tmdbService
+                    .GetMovieDetailsAsync(movie.Id.ToString(), config.TmdbApiKey, cancellationToken)
+                    .ConfigureAwait(false);
+
+                if (!TmdbService.MeetsMovieDetailsRequirements(
+                    details,
+                    config.MinimumMovieBudget,
+                    config.BudgetMetadataFloor,
+                    config.MinimumMovieRuntimeMinutes))
+                {
+                    if (details?.Budget is long budget
+                        && config.MinimumMovieBudget > 0
+                        && budget > 0
+                        && budget >= Math.Max(0, config.BudgetMetadataFloor)
+                        && budget < config.MinimumMovieBudget)
+                    {
+                        _logger.LogInformation(
+                            "|Trailers4Jellyfin| Skipping '{Title}': reliable budget {Budget} USD is below {Minimum} USD",
+                            movie.Title, budget, config.MinimumMovieBudget);
+                    }
+                    else
+                    {
+                        _logger.LogInformation(
+                            "|Trailers4Jellyfin| Skipping '{Title}': runtime {Runtime} minutes is below minimum {Minimum} minutes",
+                            movie.Title, details?.Runtime ?? 0, config.MinimumMovieRuntimeMinutes);
+                    }
+
+                    continue;
+                }
+
+                desired.Add(movie);
+                if (desired.Count >= desiredLimit)
+                    break;
+            }
+
+            if (desired.Count == 0)
+            {
+                _logger.LogInformation("|Trailers4Jellyfin| No candidates remain after budget/runtime filters.");
+                progress.Report(100);
+                return;
+            }
+
+            _logger.LogInformation(
+                "|Trailers4Jellyfin| Current desired pool contains {Count} ranked movie(s) (target {Target})",
+                desired.Count, config.MaxTotalTrailers);
+
+            var genreMap = await _tmdbService.GetGenreMapAsync(config.TmdbApiKey, cancellationToken).ConfigureAwait(false);
+            var existingByTmdbId = BuildExistingTrailerIndex(config.DownloadFolder);
+
+            progress.Report(25);
+
             int downloaded = 0;
             int processed = 0;
 
-            foreach (var movie in candidates)
+            foreach (var movie in desired)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
                 if (downloaded >= config.MaxTrailersToDownload)
                     break;
 
-                double taskProgress = 20 + (80.0 * processed / candidates.Count);
+                double taskProgress = 25 + (65.0 * processed / desired.Count);
                 progress.Report(taskProgress);
                 processed++;
 
                 var outputPath = BuildOutputPath(movie.Title, movie.Year, config);
+                string? existingPath = existingByTmdbId.TryGetValue(movie.Id, out var indexedPath)
+                    ? indexedPath
+                    : File.Exists(outputPath) ? outputPath : null;
 
-                if (config.SkipAlreadyDownloaded && File.Exists(outputPath))
+                if (config.SkipAlreadyDownloaded && existingPath != null)
                 {
-                    _logger.LogDebug("|Trailers4Jellyfin| Already downloaded: {Path}", outputPath);
                     await EnsureTrailerMetadataAsync(
-                        outputPath,
+                        existingPath,
                         movie,
                         genreMap,
                         config.TmdbApiKey,
                         cancellationToken).ConfigureAwait(false);
-                    continue;
-                }
-
-                if (!await _tmdbService.MeetsMinimumBudgetAsync(
-                    movie.Id.ToString(), config.TmdbApiKey, config.MinimumMovieBudget, cancellationToken).ConfigureAwait(false))
-                {
-                    _logger.LogInformation("|Trailers4Jellyfin| Skipping '{Title}': movie budget is below {Minimum} USD", movie.Title, config.MinimumMovieBudget);
+                    existingByTmdbId[movie.Id] = existingPath;
                     continue;
                 }
 
@@ -206,15 +262,22 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
                 if (success)
                 {
                     downloaded++;
+                    existingByTmdbId[movie.Id] = outputPath;
                     _logger.LogInformation(
                         "|Trailers4Jellyfin| [{Done}/{Max}] Saved trailer for '{Movie}' → {Path}",
                         downloaded, config.MaxTrailersToDownload, movie.Title, outputPath);
-
                 }
             }
 
+            // Reconcile only after replacements are downloaded. Out-of-target and legacy files
+            // age out as new desired trailers arrive instead of shrinking a full pool immediately.
             _assetRegistry.SyncDownloadedTrailers(config.DownloadFolder);
-            _logger.LogInformation("|Trailers4Jellyfin| Task complete. Downloaded {Count} trailer(s).", downloaded);
+            ReconcileRankedPool(config, desired);
+            _assetRegistry.SyncDownloadedTrailers(config.DownloadFolder);
+
+            _logger.LogInformation(
+                "|Trailers4Jellyfin| Task complete. Downloaded {Count} trailer(s); desired pool size {Desired}.",
+                downloaded, desired.Count);
             progress.Report(100);
         }
 
@@ -296,17 +359,9 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
             return ids;
         }
 
-        private void CleanupTrailers(
-            Configuration.PluginConfiguration config,
-            IReadOnlyList<Video> registeredTrailers)
+        private void CleanupPartialDownloads(string downloadFolder)
         {
-            var trailerItemsByPath = registeredTrailers
-                .Where(t => !string.IsNullOrWhiteSpace(t.Path))
-                .ToDictionary(t => Path.GetFullPath(t.Path!), CinemaAssetRegistry.PathComparer);
-
-            // Sweep up intermediates from a previously interrupted download. Cleanup runs before
-            // any download in this task, so nothing here is in flight.
-            foreach (var partial in Directory.EnumerateFiles(config.DownloadFolder)
+            foreach (var partial in Directory.EnumerateFiles(downloadFolder)
                          .Where(TrailerDownloadService.IsPartialDownloadArtifact)
                          .ToList())
             {
@@ -320,46 +375,118 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
                     _logger.LogWarning(ex, "|Trailers4Jellyfin| Could not delete partial download {File}", Path.GetFileName(partial));
                 }
             }
+        }
 
-            var files = Directory.GetFiles(config.DownloadFolder, "*.mp4")
+        private void DeleteWatchedTrailers(
+            Configuration.PluginConfiguration config,
+            IReadOnlyList<Video> registeredTrailers)
+        {
+            var trailerItemsByPath = registeredTrailers
+                .Where(t => !string.IsNullOrWhiteSpace(t.Path))
+                .ToDictionary(t => Path.GetFullPath(t.Path!), CinemaAssetRegistry.PathComparer);
+
+            var users = _userManager.GetUsers().ToList();
+            foreach (var file in GetTrailerFiles(config.DownloadFolder))
+            {
+                if (!trailerItemsByPath.TryGetValue(Path.GetFullPath(file), out var item)) continue;
+                bool watched = users.Any(u => _userDataManager.GetUserData(u, item)?.Played == true);
+                if (!watched) continue;
+
+                _logger.LogInformation("|Trailers4Jellyfin| Deleting watched trailer: {File}", Path.GetFileName(file));
+                DeleteTrailerAndSidecar(file);
+            }
+        }
+
+        private Dictionary<int, string> BuildExistingTrailerIndex(string downloadFolder)
+        {
+            var result = new Dictionary<int, string>();
+            foreach (var file in GetTrailerFiles(downloadFolder).OrderByDescending(File.GetLastWriteTimeUtc))
+            {
+                var tmdbId = ReadTrailerTmdbId(file);
+                if (tmdbId is int id && !result.ContainsKey(id))
+                    result[id] = file;
+            }
+
+            return result;
+        }
+
+        private void ReconcileRankedPool(
+            Configuration.PluginConfiguration config,
+            IReadOnlyList<TmdbMovieResult> desired)
+        {
+            if (config.MaxTotalTrailers <= 0)
+                return;
+
+            var files = GetTrailerFiles(config.DownloadFolder);
+            int excess = files.Count - config.MaxTotalTrailers;
+            if (excess <= 0)
+                return;
+
+            var desiredIds = desired.Select(m => m.Id).ToHashSet();
+            var retainedDesiredIds = new HashSet<int>();
+            var retireable = new List<string>();
+
+            // Keep one (newest) file for every desired TMDB movie ID. Known out-of-target,
+            // duplicate and legacy/unidentified files are retired oldest-first as replacements arrive.
+            foreach (var file in files.OrderByDescending(File.GetLastWriteTimeUtc))
+            {
+                var tmdbId = ReadTrailerTmdbId(file);
+                if (tmdbId is int id && desiredIds.Contains(id) && retainedDesiredIds.Add(id))
+                    continue;
+
+                retireable.Add(file);
+            }
+
+            foreach (var file in retireable.OrderBy(File.GetCreationTimeUtc).Take(excess))
+            {
+                _logger.LogInformation(
+                    "|Trailers4Jellyfin| Retiring trailer outside current ranked pool: {File}",
+                    Path.GetFileName(file));
+                DeleteTrailerAndSidecar(file);
+            }
+        }
+
+        private static List<string> GetTrailerFiles(string downloadFolder) =>
+            Directory.GetFiles(downloadFolder, "*.mp4")
                 .Where(f => !Path.GetFileName(f).StartsWith("._", StringComparison.Ordinal))
                 .Where(f => !TrailerDownloadService.IsPartialDownloadArtifact(f))
                 .ToList();
 
-            // Delete watched trailers first.
-            if (config.DeleteWatchedTrailers)
-            {
-                var users = _userManager.GetUsers().ToList();
-                foreach (var file in files.ToList())
-                {
-                    if (!trailerItemsByPath.TryGetValue(Path.GetFullPath(file), out var item)) continue;
-                    bool watched = users.Any(u => _userDataManager.GetUserData(u, item)?.Played == true);
-                    if (!watched) continue;
+        private static int? ReadTrailerTmdbId(string trailerPath)
+        {
+            var sidecarPath = Path.ChangeExtension(trailerPath, ".json");
+            if (!File.Exists(sidecarPath))
+                return null;
 
-                    _logger.LogInformation("|Trailers4Jellyfin| Deleting watched trailer: {File}", Path.GetFileName(file));
-                    File.Delete(file);
-                    var sidecar = Path.ChangeExtension(file, ".json");
-                    if (File.Exists(sidecar)) File.Delete(sidecar);
-                    files.Remove(file);
+            try
+            {
+                using var doc = JsonDocument.Parse(File.ReadAllText(sidecarPath));
+                if (!doc.RootElement.TryGetProperty("tmdbId", out var value))
+                    return null;
+
+                if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var numericId) && numericId > 0)
+                    return numericId;
+
+                if (value.ValueKind == JsonValueKind.String
+                    && int.TryParse(value.GetString()?.Trim(), out var stringId)
+                    && stringId > 0)
+                {
+                    return stringId;
                 }
             }
-
-            // Delete oldest trailers when over the cap.
-            if (config.MaxTotalTrailers > 0 && files.Count > config.MaxTotalTrailers)
+            catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
             {
-                var toDelete = files
-                    .OrderBy(File.GetCreationTime)
-                    .Take(files.Count - config.MaxTotalTrailers)
-                    .ToList();
-
-                foreach (var file in toDelete)
-                {
-                    _logger.LogInformation("|Trailers4Jellyfin| Deleting oldest trailer to stay under cap: {File}", Path.GetFileName(file));
-                    File.Delete(file);
-                    var sidecar = Path.ChangeExtension(file, ".json");
-                    if (File.Exists(sidecar)) File.Delete(sidecar);
-                }
+                // Legacy or unreadable sidecars are intentionally treated as unidentified.
             }
+
+            return null;
+        }
+
+        private static void DeleteTrailerAndSidecar(string file)
+        {
+            File.Delete(file);
+            var sidecar = Path.ChangeExtension(file, ".json");
+            if (File.Exists(sidecar)) File.Delete(sidecar);
         }
 
         private string BuildOutputPath(string title, int? year, Configuration.PluginConfiguration config)

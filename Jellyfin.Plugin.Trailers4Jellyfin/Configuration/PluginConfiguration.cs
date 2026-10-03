@@ -12,23 +12,42 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Configuration
 
         public bool SourceNowPlaying { get; set; } = true;
         public bool SourceUpcoming { get; set; } = true;
-        public bool SourcePopular { get; set; } = false;
-        public bool SourceTopRated { get; set; } = false;
+        public bool SourcePopular { get; set; } = true;
+        public bool SourceTopRated { get; set; } = true;
+
+        public int InTheatresMinimumVotes { get; set; } = 50;
+        public double InTheatresMinimumRating { get; set; } = 6.5;
+        public int ComingSoonMinimumVotes { get; set; } = 0;
+        public double ComingSoonPopularityMultiplier { get; set; } = 3.0;
+        public int PopularMinimumVotes { get; set; } = 100;
+        public double PopularMinimumRating { get; set; } = 6.0;
+        public int TopRatedMinimumVotes { get; set; } = 500;
 
         // ── Date Range ────────────────────────────────────────────────────────
 
-        public int ReleaseDateRangeMonths { get; set; } = 6;
+        /// <summary>Maximum age, in months, for released movies. 0 disables the past-date limit.</summary>
+        public int ReleaseDateRangeMonths { get; set; } = 12;
+
+        /// <summary>How many months ahead Coming Soon searches by primary release date.</summary>
+        public int UpcomingReleaseDateRangeMonths { get; set; } = 6;
 
         // ── Download Settings ─────────────────────────────────────────────────
 
         public string DownloadFolder { get; set; } = string.Empty;
         public int MaxTrailersToDownload { get; set; } = 20;
         public int MaxPagesPerSource { get; set; } = 3;
-        /// <summary>Minimum known movie budget in USD. 0 disables filtering; unknown budgets are allowed.</summary>
+        /// <summary>Minimum reliable known movie budget in USD. 0 disables filtering.</summary>
         public long MinimumMovieBudget { get; set; } = 10_000_000;
+
+        /// <summary>Positive TMDB budgets below this value are treated as unreliable/unknown metadata.</summary>
+        public long BudgetMetadataFloor { get; set; } = 1_000;
+
+        /// <summary>Minimum known runtime in minutes. 0 disables filtering; missing/zero runtimes are allowed.</summary>
+        public int MinimumMovieRuntimeMinutes { get; set; } = 45;
+
         public int PreferredVideoHeight { get; set; } = 720;
         public bool SkipAlreadyDownloaded { get; set; } = true;
-        public bool SkipMoviesInLibrary { get; set; } = true;
+        public bool SkipMoviesInLibrary { get; set; } = false;
         public string YtDlpPath { get; set; } = string.Empty;
 
         /// <summary>Path to ffmpeg binary. Passed to yt-dlp via --ffmpeg-location for audio/video merging.</summary>
@@ -61,8 +80,8 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Configuration
 
         // ── Trailer Rotation ──────────────────────────────────────────────────
 
-        /// <summary>Maximum trailers to keep on disk. Oldest are deleted first when exceeded. 0 = unlimited.</summary>
-        public int MaxTotalTrailers { get; set; } = 50;
+        /// <summary>Desired size of the current ranked trailer pool. 0 = unlimited.</summary>
+        public int MaxTotalTrailers { get; set; } = 100;
 
         /// <summary>Delete trailers that any user has already watched, making room for fresh ones.</summary>
         public bool DeleteWatchedTrailers { get; set; } = false;

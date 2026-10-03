@@ -14,10 +14,35 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
 {
     public record TmdbVideo(string Key, string Name, string Language, bool Official, int Size);
 
-    public record TmdbMovieResult(int Id, string Title, string ReleaseDate, IReadOnlyList<int> GenreIds)
+    [Flags]
+    public enum TmdbMovieSource
+    {
+        None = 0,
+        InTheatres = 1,
+        ComingSoon = 2,
+        Popular = 4,
+        TopRated = 8,
+    }
+
+    public record TmdbMovieResult(
+        int Id,
+        string Title,
+        string ReleaseDate,
+        IReadOnlyList<int> GenreIds,
+        double Popularity,
+        int VoteCount,
+        double VoteAverage,
+        TmdbMovieSource Sources)
     {
         public int? Year => DateTime.TryParse(ReleaseDate, out var d) ? d.Year : (int?)null;
+
+        public double GetEffectivePopularity(double comingSoonMultiplier) =>
+            Sources.HasFlag(TmdbMovieSource.ComingSoon)
+                ? Popularity * Math.Max(0, comingSoonMultiplier)
+                : Popularity;
     }
+
+    public record TmdbMovieDetails(long? Budget, int? Runtime);
 
     public class TmdbService : IDisposable
     {
@@ -60,13 +85,10 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
             _httpClient = httpClient;
         }
 
-        /// <summary>Only reject movies with a known positive budget below the minimum, in USD.</summary>
-        public async Task<bool> MeetsMinimumBudgetAsync(
-            string tmdbId, string apiKey, long minimumBudget, CancellationToken ct)
+        /// <summary>Gets budget/runtime details used by ranked-pool eligibility filters. Null means the lookup failed.</summary>
+        public async Task<TmdbMovieDetails?> GetMovieDetailsAsync(
+            string tmdbId, string apiKey, CancellationToken ct)
         {
-            ct.ThrowIfCancellationRequested();
-            if (minimumBudget <= 0) return true;
-
             try
             {
                 using var request = new HttpRequestMessage(HttpMethod.Get, $"{BaseUrl}/movie/{tmdbId}");
@@ -74,27 +96,54 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
                 using var response = await _httpClient.SendAsync(request, ct).ConfigureAwait(false);
                 response.EnsureSuccessStatusCode();
                 using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false));
-                if (!doc.RootElement.TryGetProperty("budget", out var value)
-                    || value.ValueKind != JsonValueKind.Number
-                    || !value.TryGetInt64(out var budget)
-                    || budget <= 0)
+
+                long? budget = null;
+                if (doc.RootElement.TryGetProperty("budget", out var budgetValue)
+                    && budgetValue.ValueKind == JsonValueKind.Number
+                    && budgetValue.TryGetInt64(out var parsedBudget))
                 {
-                    return true;
+                    budget = parsedBudget;
                 }
 
-                if (budget >= minimumBudget) return true;
+                int? runtime = null;
+                if (doc.RootElement.TryGetProperty("runtime", out var runtimeValue)
+                    && runtimeValue.ValueKind == JsonValueKind.Number
+                    && runtimeValue.TryGetInt32(out var parsedRuntime))
+                {
+                    runtime = parsedRuntime;
+                }
 
-                _logger.LogDebug(
-                    "|Trailers4Jellyfin| TMDB ID {Id} budget {Budget} USD is below minimum {Minimum} USD",
-                    tmdbId, budget, minimumBudget);
-                return false;
+                return new TmdbMovieDetails(budget, runtime);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "|Trailers4Jellyfin| Failed to fetch budget for TMDB ID {Id}; allowing unknown budget", tmdbId);
-                return true;
+                _logger.LogWarning(ex, "|Trailers4Jellyfin| Failed to fetch movie details for TMDB ID {Id}; allowing unknown details", tmdbId);
+                return null;
             }
+        }
+
+        internal static bool MeetsMovieDetailsRequirements(
+            TmdbMovieDetails? details,
+            long minimumBudget,
+            long budgetMetadataFloor,
+            int minimumRuntimeMinutes)
+        {
+            if (details is null) return true;
+
+            if (minimumBudget > 0
+                && details.Budget is long budget
+                && budget > 0
+                && budget >= Math.Max(0, budgetMetadataFloor)
+                && budget < minimumBudget)
+            {
+                return false;
+            }
+
+            return minimumRuntimeMinutes <= 0
+                || details.Runtime is not int runtime
+                || runtime <= 0
+                || runtime >= minimumRuntimeMinutes;
         }
 
         // JWT Read Access Tokens start with "eyJ"; v3 short keys (32 hex chars) use ?api_key=.
@@ -140,44 +189,100 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
         }
 
         /// <summary>
-        /// Fetches candidate movies from the configured TMDB sources, optionally filtered
-        /// by a minimum release date. Deduplicates across sources by TMDB ID.
+        /// Fetches, filters and merges the enabled TMDB sources. Discover filters are applied
+        /// server-side before pagination; In Theatres keeps TMDB's dedicated Now Playing endpoint
+        /// and applies its vote/rating/primary-date filters locally.
         /// </summary>
         public async Task<List<TmdbMovieResult>> GetCandidateMoviesAsync(
             Configuration.PluginConfiguration config,
             CancellationToken ct)
         {
+            var today = DateTime.UtcNow.Date;
             DateTime? releasedAfter = config.ReleaseDateRangeMonths > 0
-                ? DateTime.UtcNow.AddMonths(-config.ReleaseDateRangeMonths)
+                ? today.AddMonths(-config.ReleaseDateRangeMonths)
+                : null;
+            DateTime? comingSoonThrough = config.UpcomingReleaseDateRangeMonths > 0
+                ? today.AddMonths(config.UpcomingReleaseDateRangeMonths)
                 : null;
 
-            var seen = new HashSet<int>();
-            var results = new List<TmdbMovieResult>();
+            var all = new List<TmdbMovieResult>();
 
-            async Task FetchSource(string endpoint)
+            if (config.SourceNowPlaying)
             {
-                var movies = await FetchSourcePagesAsync(endpoint, config.TmdbApiKey, releasedAfter, config.MaxPagesPerSource, ct)
-                    .ConfigureAwait(false);
-
-                foreach (var m in movies)
-                {
-                    if (seen.Add(m.Id))
-                        results.Add(m);
-                }
+                all.AddRange(await FetchNowPlayingPagesAsync(
+                    config.TmdbApiKey,
+                    releasedAfter,
+                    today,
+                    config.InTheatresMinimumVotes,
+                    config.InTheatresMinimumRating,
+                    config.MaxPagesPerSource,
+                    ct).ConfigureAwait(false));
             }
 
-            if (config.SourceNowPlaying) await FetchSource("now_playing");
-            if (config.SourceUpcoming)   await FetchSource("upcoming");
-            if (config.SourcePopular)    await FetchSource("popular");
-            if (config.SourceTopRated)   await FetchSource("top_rated");
+            if (config.SourceUpcoming)
+            {
+                all.AddRange(await FetchDiscoverPagesAsync(
+                    config.TmdbApiKey,
+                    today,
+                    comingSoonThrough,
+                    config.ComingSoonMinimumVotes,
+                    null,
+                    "popularity.desc",
+                    TmdbMovieSource.ComingSoon,
+                    config.MaxPagesPerSource,
+                    ct).ConfigureAwait(false));
+            }
 
-            return results;
+            if (config.SourcePopular)
+            {
+                all.AddRange(await FetchDiscoverPagesAsync(
+                    config.TmdbApiKey,
+                    releasedAfter,
+                    today,
+                    config.PopularMinimumVotes,
+                    config.PopularMinimumRating,
+                    "popularity.desc",
+                    TmdbMovieSource.Popular,
+                    config.MaxPagesPerSource,
+                    ct).ConfigureAwait(false));
+            }
+
+            if (config.SourceTopRated)
+            {
+                all.AddRange(await FetchDiscoverPagesAsync(
+                    config.TmdbApiKey,
+                    releasedAfter,
+                    today,
+                    config.TopRatedMinimumVotes,
+                    null,
+                    "vote_average.desc",
+                    TmdbMovieSource.TopRated,
+                    config.MaxPagesPerSource,
+                    ct).ConfigureAwait(false));
+            }
+
+            var merged = new Dictionary<int, TmdbMovieResult>();
+            foreach (var movie in all)
+            {
+                if (merged.TryGetValue(movie.Id, out var existing))
+                    merged[movie.Id] = existing with { Sources = existing.Sources | movie.Sources };
+                else
+                    merged[movie.Id] = movie;
+            }
+
+            return merged.Values
+                .OrderByDescending(m => m.GetEffectivePopularity(config.ComingSoonPopularityMultiplier))
+                .ThenByDescending(m => m.VoteCount)
+                .ThenBy(m => m.Id)
+                .ToList();
         }
 
-        private async Task<List<TmdbMovieResult>> FetchSourcePagesAsync(
-            string endpoint,
+        private async Task<List<TmdbMovieResult>> FetchNowPlayingPagesAsync(
             string apiKey,
             DateTime? releasedAfter,
+            DateTime releasedThrough,
+            int minimumVotes,
+            double minimumRating,
             int maxPages,
             CancellationToken ct)
         {
@@ -186,58 +291,126 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
             for (int page = 1; page <= maxPages; page++)
             {
                 ct.ThrowIfCancellationRequested();
-
                 try
                 {
-                    var url = $"{BaseUrl}/movie/{endpoint}?language=en-US&page={page}";
+                    var url = $"{BaseUrl}/movie/now_playing?language=en-US&page={page}";
                     using var request = new HttpRequestMessage(HttpMethod.Get, url);
                     ApplyAuth(request, apiKey);
                     using var response = await _httpClient.SendAsync(request, ct).ConfigureAwait(false);
                     response.EnsureSuccessStatusCode();
-                    var json = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-                    using var doc = JsonDocument.Parse(json);
+                    using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false));
 
-                    var pageResults = doc.RootElement.GetProperty("results");
-                    int totalPages = doc.RootElement.GetProperty("total_pages").GetInt32();
-                    bool anyInRange = false;
-
-                    foreach (var movie in pageResults.EnumerateArray())
+                    foreach (var item in doc.RootElement.GetProperty("results").EnumerateArray())
                     {
-                        var releaseDate = movie.TryGetProperty("release_date", out var rd) ? rd.GetString() ?? string.Empty : string.Empty;
-                        var title = movie.TryGetProperty("title", out var t) ? t.GetString() ?? string.Empty : string.Empty;
-                        var id = movie.GetProperty("id").GetInt32();
-
-                        var genreIds = new List<int>();
-                        if (movie.TryGetProperty("genre_ids", out var gids))
+                        var movie = ParseMovie(item, TmdbMovieSource.InTheatres);
+                        if (!TryParseReleaseDate(movie.ReleaseDate, out var primaryDate)
+                            || primaryDate > releasedThrough
+                            || (releasedAfter.HasValue && primaryDate < releasedAfter.Value)
+                            || movie.VoteCount < minimumVotes
+                            || movie.VoteAverage < minimumRating)
                         {
-                            foreach (var gid in gids.EnumerateArray())
-                                genreIds.Add(gid.GetInt32());
+                            continue;
                         }
 
-                        if (releasedAfter.HasValue && DateTime.TryParse(releaseDate, out var parsed))
-                        {
-                            if (parsed < releasedAfter.Value) continue;
-                        }
-
-                        anyInRange = true;
-                        results.Add(new TmdbMovieResult(id, title, releaseDate, genreIds));
+                        results.Add(movie);
                     }
 
-                    if (page >= totalPages || (releasedAfter.HasValue && !anyInRange))
+                    if (page >= doc.RootElement.GetProperty("total_pages").GetInt32())
                         break;
                 }
-                catch (OperationCanceledException)
-                {
-                    throw;
-                }
+                catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "|Trailers4Jellyfin| Failed to fetch TMDB source '{Endpoint}' page {Page}", endpoint, page);
+                    _logger.LogError(ex, "|Trailers4Jellyfin| Failed to fetch In Theatres page {Page}", page);
                     break;
                 }
             }
 
             return results;
+        }
+
+        private async Task<List<TmdbMovieResult>> FetchDiscoverPagesAsync(
+            string apiKey,
+            DateTime? primaryReleasedAfter,
+            DateTime? primaryReleasedThrough,
+            int minimumVotes,
+            double? minimumRating,
+            string sortBy,
+            TmdbMovieSource source,
+            int maxPages,
+            CancellationToken ct)
+        {
+            var results = new List<TmdbMovieResult>();
+
+            for (int page = 1; page <= maxPages; page++)
+            {
+                ct.ThrowIfCancellationRequested();
+                try
+                {
+                    var url = $"{BaseUrl}/discover/movie?language=en-US&include_adult=false&include_video=false"
+                        + $"&vote_count.gte={Math.Max(0, minimumVotes)}"
+                        + $"&sort_by={sortBy}&page={page}";
+
+                    if (primaryReleasedAfter.HasValue)
+                        url += $"&primary_release_date.gte={primaryReleasedAfter.Value:yyyy-MM-dd}";
+                    if (primaryReleasedThrough.HasValue)
+                        url += $"&primary_release_date.lte={primaryReleasedThrough.Value:yyyy-MM-dd}";
+                    if (minimumRating.HasValue)
+                        url += $"&vote_average.gte={Math.Max(0, minimumRating.Value):0.0}";
+
+                    using var request = new HttpRequestMessage(HttpMethod.Get, url);
+                    ApplyAuth(request, apiKey);
+                    using var response = await _httpClient.SendAsync(request, ct).ConfigureAwait(false);
+                    response.EnsureSuccessStatusCode();
+                    using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false));
+
+                    foreach (var item in doc.RootElement.GetProperty("results").EnumerateArray())
+                        results.Add(ParseMovie(item, source));
+
+                    if (page >= doc.RootElement.GetProperty("total_pages").GetInt32())
+                        break;
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "|Trailers4Jellyfin| Failed to fetch TMDB source {Source} page {Page}", source, page);
+                    break;
+                }
+            }
+
+            return results;
+        }
+
+        private static TmdbMovieResult ParseMovie(JsonElement movie, TmdbMovieSource source)
+        {
+            var genreIds = new List<int>();
+            if (movie.TryGetProperty("genre_ids", out var gids) && gids.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var gid in gids.EnumerateArray())
+                    if (gid.TryGetInt32(out var parsed)) genreIds.Add(parsed);
+            }
+
+            return new TmdbMovieResult(
+                movie.GetProperty("id").GetInt32(),
+                movie.TryGetProperty("title", out var title) ? title.GetString() ?? string.Empty : string.Empty,
+                movie.TryGetProperty("release_date", out var release) ? release.GetString() ?? string.Empty : string.Empty,
+                genreIds,
+                movie.TryGetProperty("popularity", out var popularity) && popularity.TryGetDouble(out var p) ? p : 0,
+                movie.TryGetProperty("vote_count", out var votes) && votes.TryGetInt32(out var vc) ? vc : 0,
+                movie.TryGetProperty("vote_average", out var rating) && rating.TryGetDouble(out var va) ? va : 0,
+                source);
+        }
+
+        private static bool TryParseReleaseDate(string value, out DateTime date)
+        {
+            if (DateTime.TryParse(value, out var parsed))
+            {
+                date = parsed.Date;
+                return true;
+            }
+
+            date = default;
+            return false;
         }
 
         /// <summary>Returns all regional movie certifications in release-type priority order.

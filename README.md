@@ -169,30 +169,56 @@ A new user is immediately eligible. The episode following a commercial counts to
 
 These are best-effort frequency controls for occasional commercials. Duplicate playback reports receive basic protection, but simultaneous playback on multiple devices can exceed a limit. Episodes with a saved Jellyfin resume position are skipped; the client should also skip intros when resuming. The random roll is made for each eligible intro request, so repeated viewings are not permanently assigned the same outcome.
 
+### TMDB discovery and ranking
+
+All four discovery sources default to enabled:
+
+| Source | Default query/filter |
+|---|---|
+| **In Theatres** | TMDB `/movie/now_playing`, primary release within the past 12 months, at least 50 votes, rating at least 6.5 |
+| **Coming Soon** | Discover by primary release date from today through the next 6 months, at least 0 votes, source-sorted by popularity |
+| **Popular** | Discover by primary release date within the past 12 months, at least 100 votes, rating at least 6.0, sorted by popularity |
+| **Top Rated** | Discover by primary release date within the past 12 months, at least 500 votes, sorted by vote average |
+
+The past and Coming Soon windows are independently configurable. Discover filters are sent to TMDB before pagination; In Theatres keeps TMDB's dedicated endpoint and applies its vote/rating/date checks locally.
+
+Results are merged and deduplicated by TMDB movie ID. The final pool is ranked by current TMDB popularity, except movies that qualify through Coming Soon receive a configurable ranking-only multiplier (default **3×**). Source membership is otherwise not a quota.
+
 ### Download settings
 
-| Setting | Description |
-|---|---|
-| **TMDB API Key** | TMDB v3 API key or read-access token |
-| **Download Folder** | Where downloaded trailers and metadata sidecars are stored |
-| **Max trailers per run** | Maximum new trailers to download in one task run |
-| **Minimum movie budget (USD)** | Skip downloads for movies with known TMDB budgets below this amount; default $10,000,000. Missing or zero budgets and failed budget lookups are allowed. Set to 0 to disable. Existing trailer files are kept. |
-| **Preferred video quality** | 480p/720p built-in or higher quality with yt-dlp |
-| **Skip movies already in my Jellyfin library** | Avoid downloading trailers for movies you already own |
-| **Skip trailers already downloaded** | Reuse existing trailer files |
-| **yt-dlp path** | Optional explicit yt-dlp executable path |
-| **ffmpeg path** | Optional ffmpeg path used by yt-dlp |
-| **YouTube cookies file** | Optional cookies.txt path |
+| Setting | Default | Description |
+|---|---:|---|
+| **TMDB API Key** | — | TMDB v3 API key or read-access token |
+| **Download Folder** | — | Where downloaded trailers and metadata sidecars are stored |
+| **Max trailers per run** | 20 | Maximum successful new downloads in one scheduled run |
+| **Pages per source** | 3 | TMDB pages fetched from each enabled source |
+| **Minimum movie budget** | $10,000,000 | Reliable known budgets below this amount are excluded |
+| **Budget metadata sanity floor** | $1,000 | Positive budgets below this value are treated as unreliable/unknown and allowed |
+| **Minimum movie runtime** | 45 minutes | Known shorter runtimes are excluded; missing/zero runtime is allowed |
+| **Preferred video quality** | 720p | Higher qualities can use yt-dlp + ffmpeg |
+| **Skip movies already in my Jellyfin library** | Off | Optional TMDB-ID library exclusion |
+| **Skip trailers already downloaded** | On | Reuse an existing file/sidecar instead of re-downloading it |
+| **yt-dlp path** | — | Optional explicit yt-dlp executable path |
+| **ffmpeg path** | — | Optional ffmpeg path used by yt-dlp |
+| **YouTube cookies file** | — | Optional cookies.txt path |
+
+Budget and runtime are read from TMDB movie details. Missing details are allowed rather than causing a false rejection.
 
 ## Trailer rotation
 
-The scheduled task can:
+**Max trailers to keep** defaults to **100** and represents the desired current ranked pool, not a FIFO/oldest-file queue.
 
-- cap the total number of downloaded trailers
-- remove the oldest trailers when above the cap
-- delete trailers marked watched by any user
+Each scheduled run:
 
-Watched-state checks use the plugin's private Jellyfin trailer items, so they continue to work without a visible Trailers library.
+1. Fetches and ranks the current TMDB candidate set.
+2. Applies the budget/runtime rules until the desired pool is filled.
+3. Keeps already-downloaded trailers whose TMDB IDs are still in that desired pool.
+4. Downloads up to the per-run limit of missing desired trailers.
+5. If the folder is over the configured pool size, retires old out-of-target, duplicate or unidentified legacy files first.
+
+Sidecars contain the stable TMDB movie ID, so title changes do not break reconciliation. Legacy files without an ID are matched by their existing title/year filename when they are encountered as a desired candidate and have their sidecar upgraded; otherwise they age out gradually as ranked replacements arrive. This avoids deleting a full legacy pool before the 20-per-run replacement limit can refill it.
+
+The optional **Delete watched trailers** behavior remains available and runs before ranked reconciliation.
 
 ## Running the task
 
