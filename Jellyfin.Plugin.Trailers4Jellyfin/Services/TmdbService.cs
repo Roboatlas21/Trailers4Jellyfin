@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -42,7 +43,14 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
                 : Popularity;
     }
 
-    public record TmdbMovieDetails(long? Budget, int? Runtime);
+    public record TmdbMovieDetails(
+        long? Budget,
+        int? Runtime,
+        bool HasCollection = false,
+        DateOnly? PrimaryReleaseDate = null,
+        DateOnly? FirstRegionalTheatricalDate = null,
+        DateOnly? RegionLimitedReleaseDate = null,
+        DateOnly? RegionWideReleaseDate = null);
 
     public class TmdbService : IDisposable
     {
@@ -85,13 +93,27 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
             _httpClient = httpClient;
         }
 
-        /// <summary>Gets budget/runtime details used by ranked-pool eligibility filters. Null means the lookup failed.</summary>
+        /// <summary>
+        /// Gets movie details used by ranking and pool eligibility. The overload without
+        /// a region is retained for callers/tests that only need budget/runtime.
+        /// </summary>
+        public Task<TmdbMovieDetails?> GetMovieDetailsAsync(
+            string tmdbId,
+            string apiKey,
+            CancellationToken ct) =>
+            GetMovieDetailsAsync(tmdbId, apiKey, "US", ct);
+
         public async Task<TmdbMovieDetails?> GetMovieDetailsAsync(
-            string tmdbId, string apiKey, CancellationToken ct)
+            string tmdbId,
+            string apiKey,
+            string region,
+            CancellationToken ct)
         {
             try
             {
-                using var request = new HttpRequestMessage(HttpMethod.Get, $"{BaseUrl}/movie/{tmdbId}");
+                using var request = new HttpRequestMessage(
+                    HttpMethod.Get,
+                    $"{BaseUrl}/movie/{tmdbId}?append_to_response=release_dates");
                 ApplyAuth(request, apiKey);
                 using var response = await _httpClient.SendAsync(request, ct).ConfigureAwait(false);
                 response.EnsureSuccessStatusCode();
@@ -113,7 +135,28 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
                     runtime = parsedRuntime;
                 }
 
-                return new TmdbMovieDetails(budget, runtime);
+                var hasCollection = doc.RootElement.TryGetProperty("belongs_to_collection", out var collection)
+                    && collection.ValueKind == JsonValueKind.Object;
+
+                DateOnly? primaryReleaseDate = null;
+                if (doc.RootElement.TryGetProperty("release_date", out var primaryRelease)
+                    && primaryRelease.ValueKind == JsonValueKind.String)
+                {
+                    primaryReleaseDate = ParseDateOnly(primaryRelease.GetString());
+                }
+
+                var regional = ParseRegionalTheatricalDates(
+                    doc.RootElement,
+                    NormalizeRegion(region));
+
+                return new TmdbMovieDetails(
+                    budget,
+                    runtime,
+                    hasCollection,
+                    primaryReleaseDate,
+                    regional.FirstTheatrical,
+                    regional.Limited,
+                    regional.Wide);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch (Exception ex)
@@ -121,6 +164,34 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
                 _logger.LogWarning(ex, "|Trailers4Jellyfin| Failed to fetch movie details for TMDB ID {Id}; allowing unknown details", tmdbId);
                 return null;
             }
+        }
+
+        /// <summary>
+        /// Enriches one discovered TMDB movie with the regional release information and
+        /// details required by TrailerRankingService. A failed detail lookup intentionally
+        /// falls back to the list release date so a transient TMDB failure does not remove
+        /// an otherwise usable title from the pool.
+        /// </summary>
+        internal async Task<TrailerRankingCandidate> GetRankingCandidateAsync(
+            TmdbMovieResult movie,
+            Configuration.PluginConfiguration config,
+            CancellationToken ct)
+        {
+            var details = await GetMovieDetailsAsync(
+                movie.Id.ToString(CultureInfo.InvariantCulture),
+                config.TmdbApiKey,
+                config.TheatricalRegion,
+                ct).ConfigureAwait(false);
+
+            var fallbackReleaseDate = details?.PrimaryReleaseDate ?? ParseDateOnly(movie.ReleaseDate);
+            return new TrailerRankingCandidate(
+                movie,
+                details?.FirstRegionalTheatricalDate ?? fallbackReleaseDate,
+                details?.RegionLimitedReleaseDate,
+                details?.RegionWideReleaseDate,
+                details?.Budget,
+                details?.Runtime,
+                details?.HasCollection == true);
         }
 
         internal static bool MeetsMovieDetailsRequirements(
@@ -198,6 +269,8 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
             CancellationToken ct)
         {
             var today = DateTime.UtcNow.Date;
+            var region = NormalizeRegion(config.TheatricalRegion);
+
             DateTime? releasedAfter = config.ReleaseDateRangeMonths > 0
                 ? today.AddMonths(-config.ReleaseDateRangeMonths)
                 : null;
@@ -211,8 +284,7 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
             {
                 all.AddRange(await FetchNowPlayingPagesAsync(
                     config.TmdbApiKey,
-                    releasedAfter,
-                    today,
+                    region,
                     config.InTheatresMinimumVotes,
                     config.InTheatresMinimumRating,
                     config.MaxPagesPerSource,
@@ -223,6 +295,8 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
             {
                 all.AddRange(await FetchDiscoverPagesAsync(
                     config.TmdbApiKey,
+                    region,
+                    true,
                     today,
                     comingSoonThrough,
                     config.ComingSoonMinimumVotes,
@@ -237,6 +311,8 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
             {
                 all.AddRange(await FetchDiscoverPagesAsync(
                     config.TmdbApiKey,
+                    region,
+                    false,
                     releasedAfter,
                     today,
                     config.PopularMinimumVotes,
@@ -251,6 +327,8 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
             {
                 all.AddRange(await FetchDiscoverPagesAsync(
                     config.TmdbApiKey,
+                    region,
+                    false,
                     releasedAfter,
                     today,
                     config.TopRatedMinimumVotes,
@@ -279,8 +357,7 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
 
         private async Task<List<TmdbMovieResult>> FetchNowPlayingPagesAsync(
             string apiKey,
-            DateTime? releasedAfter,
-            DateTime releasedThrough,
+            string region,
             int minimumVotes,
             double minimumRating,
             int maxPages,
@@ -293,7 +370,8 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
                 ct.ThrowIfCancellationRequested();
                 try
                 {
-                    var url = $"{BaseUrl}/movie/now_playing?language=en-US&page={page}";
+                    var url = $"{BaseUrl}/movie/now_playing?language=en-US"
+                        + $"&region={Uri.EscapeDataString(region)}&page={page}";
                     using var request = new HttpRequestMessage(HttpMethod.Get, url);
                     ApplyAuth(request, apiKey);
                     using var response = await _httpClient.SendAsync(request, ct).ConfigureAwait(false);
@@ -303,10 +381,7 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
                     foreach (var item in doc.RootElement.GetProperty("results").EnumerateArray())
                     {
                         var movie = ParseMovie(item, TmdbMovieSource.InTheatres);
-                        if (!TryParseReleaseDate(movie.ReleaseDate, out var primaryDate)
-                            || primaryDate > releasedThrough
-                            || (releasedAfter.HasValue && primaryDate < releasedAfter.Value)
-                            || movie.VoteCount < minimumVotes
+                        if (movie.VoteCount < minimumVotes
                             || movie.VoteAverage < minimumRating)
                         {
                             continue;
@@ -331,8 +406,10 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
 
         private async Task<List<TmdbMovieResult>> FetchDiscoverPagesAsync(
             string apiKey,
-            DateTime? primaryReleasedAfter,
-            DateTime? primaryReleasedThrough,
+            string region,
+            bool regionalTheatricalDates,
+            DateTime? releasedAfter,
+            DateTime? releasedThrough,
             int minimumVotes,
             double? minimumRating,
             string sortBy,
@@ -351,10 +428,28 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
                         + $"&vote_count.gte={Math.Max(0, minimumVotes)}"
                         + $"&sort_by={sortBy}&page={page}";
 
-                    if (primaryReleasedAfter.HasValue)
-                        url += $"&primary_release_date.gte={primaryReleasedAfter.Value:yyyy-MM-dd}";
-                    if (primaryReleasedThrough.HasValue)
-                        url += $"&primary_release_date.lte={primaryReleasedThrough.Value:yyyy-MM-dd}";
+                    if (regionalTheatricalDates)
+                    {
+                        // TMDB's release_date filters honor region. Type 2 = limited
+                        // theatrical and type 3 = theatrical. This fixes upcoming movies
+                        // whose primary release date belongs to another territory/year.
+                        url += $"&region={Uri.EscapeDataString(region)}&with_release_type=2%7C3";
+                        if (releasedAfter.HasValue)
+                            url += $"&release_date.gte={releasedAfter.Value:yyyy-MM-dd}";
+                        if (releasedThrough.HasValue)
+                            url += $"&release_date.lte={releasedThrough.Value:yyyy-MM-dd}";
+                    }
+                    else
+                    {
+                        // Keep Popular/Top Rated broad enough to retain major recent
+                        // streaming/non-theatrical movies. Lifecycle scoring later prefers
+                        // the first regional theatrical date when one exists.
+                        if (releasedAfter.HasValue)
+                            url += $"&primary_release_date.gte={releasedAfter.Value:yyyy-MM-dd}";
+                        if (releasedThrough.HasValue)
+                            url += $"&primary_release_date.lte={releasedThrough.Value:yyyy-MM-dd}";
+                    }
+
                     if (minimumRating.HasValue)
                         url += $"&vote_average.gte={Math.Max(0, minimumRating.Value):0.0}";
 
@@ -400,6 +495,94 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
                 movie.TryGetProperty("vote_average", out var rating) && rating.TryGetDouble(out var va) ? va : 0,
                 source);
         }
+
+        internal static string NormalizeRegion(string? region)
+        {
+            var value = region?.Trim().ToUpperInvariant();
+            return value is { Length: 2 }
+                && value.All(static c => c is >= 'A' and <= 'Z')
+                    ? value
+                    : "US";
+        }
+
+        private static DateOnly? ParseDateOnly(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return null;
+
+            var datePart = value.Length >= 10 ? value[..10] : value;
+            return DateOnly.TryParseExact(
+                datePart,
+                "yyyy-MM-dd",
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.None,
+                out var parsed)
+                ? parsed
+                : null;
+        }
+
+        internal static RegionalTheatricalDates ParseRegionalTheatricalDates(
+            JsonElement movieRoot,
+            string region)
+        {
+            DateOnly? limited = null;
+            DateOnly? wide = null;
+
+            if (!movieRoot.TryGetProperty("release_dates", out var releaseDates)
+                || releaseDates.ValueKind != JsonValueKind.Object
+                || !releaseDates.TryGetProperty("results", out var countries)
+                || countries.ValueKind != JsonValueKind.Array)
+            {
+                return new RegionalTheatricalDates(null, null, null);
+            }
+
+            foreach (var country in countries.EnumerateArray())
+            {
+                if (!country.TryGetProperty("iso_3166_1", out var countryCode)
+                    || !string.Equals(countryCode.GetString(), region, StringComparison.OrdinalIgnoreCase)
+                    || !country.TryGetProperty("release_dates", out var dates)
+                    || dates.ValueKind != JsonValueKind.Array)
+                {
+                    continue;
+                }
+
+                foreach (var release in dates.EnumerateArray())
+                {
+                    if (!release.TryGetProperty("type", out var typeElement)
+                        || !typeElement.TryGetInt32(out var type)
+                        || !release.TryGetProperty("release_date", out var dateElement)
+                        || dateElement.ValueKind != JsonValueKind.String)
+                    {
+                        continue;
+                    }
+
+                    var date = ParseDateOnly(dateElement.GetString());
+                    if (!date.HasValue)
+                        continue;
+
+                    if (type == 2 && (!limited.HasValue || date.Value < limited.Value))
+                        limited = date;
+                    else if (type == 3 && (!wide.HasValue || date.Value < wide.Value))
+                        wide = date;
+                }
+
+                break;
+            }
+
+            DateOnly? first = limited switch
+            {
+                null => wide,
+                _ when wide is null => limited,
+                _ => limited.Value <= wide.Value ? limited : wide,
+            };
+
+            return new RegionalTheatricalDates(first, limited, wide);
+        }
+
+        internal sealed record RegionalTheatricalDates(
+            DateOnly? FirstTheatrical,
+            DateOnly? Limited,
+            DateOnly? Wide);
 
         private static bool TryParseReleaseDate(string value, out DateTime date)
         {

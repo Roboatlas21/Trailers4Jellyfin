@@ -23,6 +23,7 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
         private readonly IUserDataManager _userDataManager;
         private readonly TrailerRatingPolicy _ratings;
         private readonly ILibraryManager _libraryManager;
+        private readonly TrailerRankingStore _rankingStore;
         private readonly ILogger<TrailerIntroProvider> _logger;
 
         public string Name => "Trailers4Jellyfin";
@@ -33,6 +34,7 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
             IUserDataManager userDataManager,
             TrailerRatingPolicy ratings,
             ILibraryManager libraryManager,
+            TrailerRankingStore rankingStore,
             ILogger<TrailerIntroProvider> logger)
         {
             _assetRegistry = assetRegistry;
@@ -40,6 +42,7 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
             _userDataManager = userDataManager;
             _ratings = ratings;
             _libraryManager = libraryManager;
+            _rankingStore = rankingStore;
             _logger = logger;
         }
 
@@ -181,20 +184,124 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
             var history = config.PreferUnwatchedTrailers
                 ? _userDataManager.GetUserDataBatch(group.Select(x => x.Trailer).ToArray(), user)
                 : new Dictionary<Guid, UserItemData>();
-            return group.Select(x =>
+
+            var playbackCandidates = group.Select(x =>
                 {
                     history.TryGetValue(x.Trailer.Id, out var data);
-                    return (x.Trailer, Score: x.Genres.Count(scoringGenres.Contains),
+                    return (x.Trailer, GenreScore: x.Genres.Count(scoringGenres.Contains),
                         Seen: data?.Played == true || data?.PlayCount > 0 || data?.LastPlayedDate != null,
                         LastPlayed: data?.LastPlayedDate ?? DateTime.MinValue,
                         Popularity: x.Metadata.Popularity ?? 0, TmdbId: x.Metadata.TmdbId ?? int.MaxValue);
                 })
-                .OrderBy(x => x.Seen)
-                .ThenByDescending(x => x.Seen ? 0 : x.Score)
-                .ThenBy(x => x.Seen ? x.LastPlayed : DateTime.MinValue)
-                .ThenByDescending(x => x.Popularity)
-                .ThenBy(x => x.TmdbId)
-                .ThenBy(x => x.Trailer.Id)
+                .ToList();
+
+            // Prefer-unwatched is a group-level policy, not just a sort key. If any eligible
+            // trailer in the selected genre group is unwatched, watched trailers are excluded
+            // from this selection entirely. Oldest LastPlayed is used only after the whole
+            // selected group has been exhausted.
+            var allEligibleTrailersWatched = config.PreferUnwatchedTrailers
+                && playbackCandidates.Count > 0
+                && playbackCandidates.All(x => x.Seen);
+
+            var selectionCandidates = config.PreferUnwatchedTrailers && !allEligibleTrailersWatched
+                ? playbackCandidates.Where(x => !x.Seen).ToList()
+                : playbackCandidates;
+
+            if (config.PlaybackRankingMode == Configuration.TrailerPlaybackRankingMode.Score)
+            {
+                var manifest = _rankingStore.GetManifest(config.DownloadFolder);
+                if (manifest != null)
+                {
+                    var scoredCandidates = selectionCandidates
+                        .Select(x =>
+                        {
+                            TrailerRankingManifestEntry? ranking = null;
+                            var hasRanking = x.TmdbId != int.MaxValue
+                                && manifest.Movies.TryGetValue(
+                                    x.TmdbId.ToString(CultureInfo.InvariantCulture),
+                                    out ranking);
+
+                            var poolScore = ranking?.PoolScore ?? 0.0;
+                            var playbackPriority = ranking == null
+                                ? 0.0
+                                : config.ApplyPlaybackReleaseBoost
+                                    ? ranking.PlaybackScore
+                                    : ranking.PoolScore;
+
+                            return (
+                                x.Trailer,
+                                x.GenreScore,
+                                x.LastPlayed,
+                                x.Popularity,
+                                x.TmdbId,
+                                HasRanking: hasRanking,
+                                PoolScore: poolScore,
+                                PlaybackPriority: playbackPriority);
+                        })
+                        .ToList();
+
+                    // Do not mix unrelated numeric scales. A current manifest normally contains
+                    // every movie in the maintained trailer pool. If one selected-group candidate
+                    // cannot be scored, use the complete legacy popularity ordering for that play.
+                    if (scoredCandidates.All(x => x.HasRanking))
+                    {
+                        var ordered = allEligibleTrailersWatched
+                            ? scoredCandidates
+                                // Once the whole group has been watched, rotate by oldest play
+                                // first. For equal history, prefer the most relevant genre match
+                                // before score-based playback priority.
+                                .OrderBy(x => x.LastPlayed)
+                                .ThenByDescending(x => x.GenreScore)
+                                .ThenByDescending(x => x.PlaybackPriority)
+                                .ThenByDescending(x => x.PoolScore)
+                                .ThenByDescending(x => x.Popularity)
+                                .ThenBy(x => x.TmdbId)
+                                .ThenBy(x => x.Trailer.Id)
+                            : scoredCandidates
+                                // Genre relevance is the primary ordering tier inside the selected
+                                // direct/related group. PlaybackScore (or PoolScore when the release
+                                // boost is disabled) only ranks trailers with equal genre relevance.
+                                .OrderByDescending(x => x.GenreScore)
+                                .ThenByDescending(x => x.PlaybackPriority)
+                                .ThenByDescending(x => x.PoolScore)
+                                .ThenByDescending(x => x.Popularity)
+                                .ThenBy(x => x.TmdbId)
+                                .ThenBy(x => x.Trailer.Id);
+
+                        return ordered
+                            .Take(config.NumberOfTrailers)
+                            .Select(x => x.Trailer)
+                            .ToList();
+                    }
+
+                    _logger.LogDebug(
+                        "|Trailers4Jellyfin| Ranking manifest is missing {Count} candidate(s) from the selected trailer group; falling back to popularity playback ordering",
+                        scoredCandidates.Count(x => !x.HasRanking));
+                }
+                else
+                {
+                    _logger.LogDebug(
+                        "|Trailers4Jellyfin| Ranking manifest unavailable; falling back to popularity playback ordering");
+                }
+            }
+
+            // Legacy popularity mode and safe fallback for missing/corrupt/incomplete ranking
+            // state use the same group-level unwatched policy. LastPlayed only participates once
+            // every eligible trailer in the selected group has been watched.
+            var popularityOrdered = allEligibleTrailersWatched
+                ? selectionCandidates
+                    .OrderBy(x => x.LastPlayed)
+                    .ThenByDescending(x => x.GenreScore)
+                    .ThenByDescending(x => x.Popularity)
+                    .ThenBy(x => x.TmdbId)
+                    .ThenBy(x => x.Trailer.Id)
+                : selectionCandidates
+                    .OrderByDescending(x => x.GenreScore)
+                    .ThenByDescending(x => x.Popularity)
+                    .ThenBy(x => x.TmdbId)
+                    .ThenBy(x => x.Trailer.Id);
+
+            return popularityOrdered
                 .Take(config.NumberOfTrailers)
                 .Select(x => x.Trailer)
                 .ToList();

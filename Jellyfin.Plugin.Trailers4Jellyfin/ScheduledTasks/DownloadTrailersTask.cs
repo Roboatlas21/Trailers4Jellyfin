@@ -69,6 +69,8 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
         private readonly TmdbService _tmdbService;
         private readonly TrailerDownloadService _downloadService;
         private readonly CinemaAssetRegistry _assetRegistry;
+        private readonly TrailerRankingService _rankingService;
+        private readonly TrailerRankingStore _rankingStore;
 
         public string Name => "Download TMDB Trailers";
         public string Key => "Trailers4JellyfinDownload";
@@ -80,13 +82,17 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
             ILibraryManager libraryManager,
             TmdbService tmdbService,
             TrailerDownloadService downloadService,
-            CinemaAssetRegistry assetRegistry)
+            CinemaAssetRegistry assetRegistry,
+            TrailerRankingService rankingService,
+            TrailerRankingStore rankingStore)
         {
             _logger = logger;
             _libraryManager = libraryManager;
             _tmdbService = tmdbService;
             _downloadService = downloadService;
             _assetRegistry = assetRegistry;
+            _rankingService = rankingService;
+            _rankingStore = rankingStore;
         }
 
         public IEnumerable<TaskTriggerInfo> GetDefaultTriggers()
@@ -161,6 +167,16 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
             _logger.LogInformation("|Trailers4Jellyfin| Fetching ranked candidates from TMDB...");
             var candidates = await _tmdbService.GetCandidateMoviesAsync(config, cancellationToken).ConfigureAwait(false);
 
+            // Source methods deliberately tolerate individual TMDB failures. If every source
+            // produced zero candidates, treat the run as incomplete and retain the last known
+            // good manifest rather than atomically replacing it with an empty one.
+            if (candidates.Count == 0)
+            {
+                _logger.LogWarning("|Trailers4Jellyfin| TMDB discovery returned no candidates; preserving the previous ranking manifest");
+                progress.Report(100);
+                return;
+            }
+
             await RefreshTrailerPopularitiesAsync(
                 registeredTrailers,
                 candidates,
@@ -173,58 +189,95 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
                     .ToList();
             }
 
-            _logger.LogInformation("|Trailers4Jellyfin| {Count} ranked candidates remain after source/library filters", candidates.Count);
+            _logger.LogInformation(
+                "|Trailers4Jellyfin| {Count} candidates remain after source/library filters; evaluating {Mode} pool ranking",
+                candidates.Count,
+                config.PoolRankingMode);
 
             if (candidates.Count == 0)
             {
+                await WriteRankingManifestAsync(
+                    Array.Empty<TrailerRankingEvaluation>(),
+                    Array.Empty<int>(),
+                    config,
+                    cancellationToken).ConfigureAwait(false);
                 _logger.LogInformation("|Trailers4Jellyfin| No eligible candidates found. All done.");
                 progress.Report(100);
                 return;
             }
 
-            // Budget/runtime live on /movie/{id}; trailer availability lives on /movie/{id}/videos.
-            // Keep scanning below the nominal top-N until the desired pool contains N movies that
-            // either already have a local trailer or currently expose a suitable TMDB/YouTube trailer.
-            int desiredLimit = config.MaxTotalTrailers > 0 ? config.MaxTotalTrailers : candidates.Count;
-            var existingByTmdbId = BuildExistingTrailerIndex(config.DownloadFolder);
+            // Enrich all discovered candidates once. /movie/{id}?append_to_response=release_dates
+            // supplies budget/runtime, collection membership, the first regional theatrical date,
+            // and limited/wide dates used by LifecycleScore. This replaces the old per-candidate
+            // details lookup inside the pool-selection callback.
+            var rankingCandidates = new List<TrailerRankingCandidate>(candidates.Count);
+            for (var index = 0; index < candidates.Count; index++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var rankingCandidate = await _tmdbService
+                    .GetRankingCandidateAsync(candidates[index], config, cancellationToken)
+                    .ConfigureAwait(false);
+                rankingCandidates.Add(rankingCandidate);
 
-            var desired = await RankedTrailerPoolSelector.SelectAsync(
-                candidates,
-                desiredLimit,
-                async (movie, ct) =>
-                {
-                    var details = await _tmdbService
-                        .GetMovieDetailsAsync(movie.Id.ToString(), config.TmdbApiKey, ct)
-                        .ConfigureAwait(false);
+                progress.Report(10 + (10.0 * (index + 1) / candidates.Count));
+            }
 
-                    if (TmdbService.MeetsMovieDetailsRequirements(
-                        details,
+            var today = DateOnly.FromDateTime(DateTime.UtcNow);
+            var evaluations = _rankingService
+                .EvaluateAll(rankingCandidates, config, today)
+                .ToList();
+
+            var orderedEvaluations = _rankingService
+                .OrderForPool(evaluations, config)
+                .ToList();
+
+            // LifecycleScore already applies budget/runtime and all score eligibility rules.
+            // Popularity mode deliberately preserves the legacy ranking formula, but it still
+            // uses the common budget/runtime filters before a movie can occupy a pool slot.
+            if (config.PoolRankingMode == Configuration.TrailerPoolRankingMode.Popularity)
+            {
+                orderedEvaluations = orderedEvaluations
+                    .Where(e => e.Score.DaysFromRelease is >= -180 and <= 365)
+                    .Where(e => TmdbService.MeetsMovieDetailsRequirements(
+                        new TmdbMovieDetails(e.Candidate.Budget, e.Candidate.Runtime),
                         config.MinimumMovieBudget,
                         config.BudgetMetadataFloor,
                         config.MinimumMovieRuntimeMinutes))
-                    {
-                        return true;
-                    }
+                    .ToList();
+            }
 
-                    if (details?.Budget is long budget
-                        && config.MinimumMovieBudget > 0
-                        && budget > 0
-                        && budget >= Math.Max(0, config.BudgetMetadataFloor)
-                        && budget < config.MinimumMovieBudget)
-                    {
-                        _logger.LogInformation(
-                            "|Trailers4Jellyfin| Skipping '{Title}': reliable budget {Budget} USD is below {Minimum} USD",
-                            movie.Title, budget, config.MinimumMovieBudget);
-                    }
-                    else
-                    {
-                        _logger.LogInformation(
-                            "|Trailers4Jellyfin| Skipping '{Title}': runtime {Runtime} minutes is below minimum {Minimum} minutes",
-                            movie.Title, details?.Runtime ?? 0, config.MinimumMovieRuntimeMinutes);
-                    }
+            var rankedCandidates = orderedEvaluations
+                .Select(e => e.Candidate.Movie)
+                .ToList();
 
-                    return false;
-                },
+            _logger.LogInformation(
+                "|Trailers4Jellyfin| {Eligible} candidate(s) remain after {Mode} ranking/eligibility (from {Evaluated} evaluated)",
+                rankedCandidates.Count,
+                config.PoolRankingMode,
+                evaluations.Count);
+
+            if (rankedCandidates.Count == 0)
+            {
+                await WriteRankingManifestAsync(
+                    evaluations,
+                    Array.Empty<int>(),
+                    config,
+                    cancellationToken).ConfigureAwait(false);
+                _logger.LogInformation("|Trailers4Jellyfin| No candidates remain after ranking/eligibility filters.");
+                progress.Report(100);
+                return;
+            }
+
+            // Trailer availability lives on /movie/{id}/videos. Keep scanning below the
+            // nominal top-N until the desired pool contains N movies that either already have
+            // a local trailer or currently expose a suitable TMDB/YouTube trailer.
+            int desiredLimit = config.MaxTotalTrailers > 0 ? config.MaxTotalTrailers : rankedCandidates.Count;
+            var existingByTmdbId = BuildExistingTrailerIndex(config.DownloadFolder);
+
+            var desired = await RankedTrailerPoolSelector.SelectAsync(
+                rankedCandidates,
+                desiredLimit,
+                static (_, _) => Task.FromResult(true),
                 movie =>
                 {
                     if (existingByTmdbId.TryGetValue(movie.Id, out var indexedPath))
@@ -252,6 +305,8 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
 
             if (desired.Count == 0)
             {
+                _logger.LogWarning(
+                    "|Trailers4Jellyfin| No trailer-capable candidates were resolved; preserving the previous ranking manifest");
                 _logger.LogInformation("|Trailers4Jellyfin| No trailer-capable candidates remain after eligibility filters.");
                 progress.Report(100);
                 return;
@@ -363,10 +418,42 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
             ReconcileRankedPool(config, desired.Select(x => x.Movie).ToList());
             _assetRegistry.SyncDownloadedTrailers(config.DownloadFolder);
 
+            // Rewrite ranking state on every successful daily run even when no new trailer
+            // was downloaded. PoolScore/PlaybackScore are date-sensitive, so the manifest
+            // must advance with the release calendar independently of download activity.
+            await WriteRankingManifestAsync(
+                evaluations,
+                desired.Select(x => x.Movie.Id).ToList(),
+                config,
+                cancellationToken).ConfigureAwait(false);
+
             _logger.LogInformation(
                 "|Trailers4Jellyfin| Task complete. Attempted {Attempted} candidate(s), downloaded {Downloaded} trailer(s); trailer-capable desired pool size {Desired}.",
                 attempted, downloaded, desired.Count);
             progress.Report(100);
+        }
+
+        private async Task WriteRankingManifestAsync(
+            IReadOnlyList<TrailerRankingEvaluation> evaluations,
+            IReadOnlyList<int> selectedPoolOrder,
+            Configuration.PluginConfiguration config,
+            CancellationToken ct)
+        {
+            var manifest = _rankingService.BuildManifest(
+                evaluations,
+                selectedPoolOrder,
+                config,
+                DateTimeOffset.UtcNow);
+
+            await _rankingStore
+                .WriteAsync(config.DownloadFolder, manifest, ct)
+                .ConfigureAwait(false);
+
+            _logger.LogInformation(
+                "|Trailers4Jellyfin| Updated {Manifest} ({Evaluated} evaluated, {Selected} selected)",
+                TrailerRankingStore.FileName,
+                evaluations.Count,
+                selectedPoolOrder.Count);
         }
 
         private async Task EnsureTrailerMetadataAsync(
