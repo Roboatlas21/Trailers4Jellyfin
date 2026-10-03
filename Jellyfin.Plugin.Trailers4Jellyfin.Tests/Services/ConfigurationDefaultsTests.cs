@@ -8,7 +8,7 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Tests.Services;
 public sealed class ConfigurationDefaultsTests
 {
     [Theory]
-    [InlineData("", 10_000_000L)]
+    [InlineData("", 500_000L)]
     [InlineData("0", 0L)]
     [InlineData("5000000", 5_000_000L)]
     public void MinimumBudget_PreservesSavedValuesAndDefaultsOlderConfigurations(string saved, long expected)
@@ -51,20 +51,24 @@ public sealed class ConfigurationDefaultsTests
         Assert.True(config.SourceTopRated);
         Assert.Equal(12, config.ReleaseDateRangeMonths);
         Assert.Equal(6, config.UpcomingReleaseDateRangeMonths);
-        Assert.Equal(50, config.InTheatresMinimumVotes);
+        Assert.Equal(30, config.InTheatresMinimumVotes);
         Assert.Equal(6.5, config.InTheatresMinimumRating);
         Assert.Equal(0, config.ComingSoonMinimumVotes);
         Assert.Equal(3.0, config.ComingSoonPopularityMultiplier);
         Assert.Equal(100, config.PopularMinimumVotes);
         Assert.Equal(6.0, config.PopularMinimumRating);
         Assert.Equal(500, config.TopRatedMinimumVotes);
-        Assert.Equal(10_000_000L, config.MinimumMovieBudget);
+        Assert.Equal(500_000L, config.MinimumMovieBudget);
         Assert.Equal(1_000L, config.BudgetMetadataFloor);
         Assert.Equal(45, config.MinimumMovieRuntimeMinutes);
         Assert.False(config.SkipMoviesInLibrary);
         Assert.True(config.SkipAlreadyDownloaded);
         Assert.Equal(100, config.MaxTotalTrailers);
         Assert.Equal(20, config.MaxTrailersToDownload);
-        Assert.Equal(3, config.MaxPagesPerSource);
+        Assert.Equal(4, config.MaxPagesPerSource);
+        Assert.Equal(TrailerPoolRankingMode.LifecycleScore, config.PoolRankingMode);
+        Assert.Equal(TrailerPlaybackRankingMode.Score, config.PlaybackRankingMode);
+        Assert.True(config.ApplyPlaybackReleaseBoost);
+        Assert.Equal("US", config.TheatricalRegion);
     }
 }

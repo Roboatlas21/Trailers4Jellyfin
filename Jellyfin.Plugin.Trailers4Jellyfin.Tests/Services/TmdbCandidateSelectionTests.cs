@@ -31,9 +31,9 @@ public sealed class TmdbCandidateSelectionTests
             {
                 json = Page(
                     Movie(1, "Theatre", today, 80, 50, 6.5),
-                    Movie(11, "Too Few Votes", today, 500, 49, 9.0),
+                    Movie(11, "Too Few Votes", today, 500, 29, 9.0),
                     Movie(12, "Too Low Rated", today, 500, 500, 6.4),
-                    Movie(13, "Too Old", today.AddMonths(-13), 500, 500, 9.0));
+                    Movie(13, "Old Primary Date", today.AddMonths(-13), 10, 500, 9.0));
             }
             else if (query.Contains("vote_count.gte=0", StringComparison.Ordinal))
             {
@@ -69,17 +69,22 @@ public sealed class TmdbCandidateSelectionTests
 
         var movies = await service.GetCandidateMoviesAsync(config, TestContext.Current.CancellationToken);
 
-        Assert.Equal(new[] { 2, 3, 4, 1 }, movies.Select(m => m.Id).ToArray());
+        Assert.Equal(new[] { 2, 3, 4, 1, 13 }, movies.Select(m => m.Id).ToArray());
         Assert.Equal(TmdbMovieSource.Popular | TmdbMovieSource.TopRated, movies.Single(m => m.Id == 4).Sources);
-        Assert.DoesNotContain(movies, m => m.Id is 11 or 12 or 13);
+        Assert.DoesNotContain(movies, m => m.Id is 11 or 12);
+        Assert.Contains(movies, m => m.Id == 13 && m.Sources == TmdbMovieSource.InTheatres);
 
         var past = today.AddMonths(-12).ToString("yyyy-MM-dd");
         var future = today.AddMonths(6).ToString("yyyy-MM-dd");
 
-        Assert.Contains(requests, r => r.Contains("/movie/now_playing", StringComparison.Ordinal));
         Assert.Contains(requests, r =>
-            r.Contains("primary_release_date.gte=" + today.ToString("yyyy-MM-dd"), StringComparison.Ordinal)
-            && r.Contains("primary_release_date.lte=" + future, StringComparison.Ordinal)
+            r.Contains("/movie/now_playing", StringComparison.Ordinal)
+            && r.Contains("region=US", StringComparison.Ordinal));
+        Assert.Contains(requests, r =>
+            r.Contains("region=US", StringComparison.Ordinal)
+            && r.Contains("with_release_type=2|3", StringComparison.Ordinal)
+            && r.Contains("release_date.gte=" + today.ToString("yyyy-MM-dd"), StringComparison.Ordinal)
+            && r.Contains("release_date.lte=" + future, StringComparison.Ordinal)
             && r.Contains("vote_count.gte=0", StringComparison.Ordinal)
             && r.Contains("sort_by=popularity.desc", StringComparison.Ordinal));
         Assert.Contains(requests, r =>

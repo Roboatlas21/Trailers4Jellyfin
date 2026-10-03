@@ -42,10 +42,16 @@ public sealed class TmdbBudgetTests
         using var handler = new StubHandler((request, _) =>
         {
             Assert.Equal("/3/movie/1340102", request.RequestUri!.AbsolutePath);
-            Assert.Equal("?api_key=test-key", request.RequestUri.Query);
+            Assert.Contains("append_to_response=release_dates", request.RequestUri.Query, StringComparison.Ordinal);
+            Assert.Contains("api_key=test-key", request.RequestUri.Query, StringComparison.Ordinal);
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = new StringContent("{\"budget\":7500000,\"runtime\":102}")
+                Content = new StringContent(
+                    "{\"budget\":7500000,\"runtime\":102,\"release_date\":\"2026-10-15\","
+                    + "\"belongs_to_collection\":{\"id\":123},"
+                    + "\"release_dates\":{\"results\":[{\"iso_3166_1\":\"US\",\"release_dates\":["
+                    + "{\"type\":2,\"release_date\":\"2026-10-10T00:00:00.000Z\"},"
+                    + "{\"type\":3,\"release_date\":\"2026-10-15T00:00:00.000Z\"}]}]}}")
             });
         });
 
@@ -55,6 +61,11 @@ public sealed class TmdbBudgetTests
         Assert.NotNull(details);
         Assert.Equal(7_500_000, details!.Budget);
         Assert.Equal(102, details.Runtime);
+        Assert.True(details.HasCollection);
+        Assert.Equal(new DateOnly(2026, 10, 15), details.PrimaryReleaseDate);
+        Assert.Equal(new DateOnly(2026, 10, 10), details.FirstRegionalTheatricalDate);
+        Assert.Equal(new DateOnly(2026, 10, 10), details.RegionLimitedReleaseDate);
+        Assert.Equal(new DateOnly(2026, 10, 15), details.RegionWideReleaseDate);
     }
 
     [Fact]

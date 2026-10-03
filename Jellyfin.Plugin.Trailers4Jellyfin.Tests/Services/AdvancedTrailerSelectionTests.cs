@@ -86,11 +86,11 @@ public sealed partial class TrailerSelectionTests
         var unseen = Clip("unseen", null, "Horror");
         Watched(watched, 10);
         var result = _provider.SelectTrailers(new Movie { Genres = new[] { "Horror", "Comedy" } }, new[] { watched, unseen }, _config, _user);
-        Assert.Equal(new[] { unseen.Id, watched.Id }, result.Select(t => t.Id));
+        Assert.Equal(unseen.Id, Assert.Single(result).Id);
     }
 
     [Fact]
-    public void MultipleSlots_UseUnwatchedScoresThenOldestDates_IgnoringWatchedScores()
+    public void MultipleSlots_UseOnlyUnwatchedTrailersUntilGroupIsExhausted()
     {
         _config.PreferUnwatchedTrailers = true;
         _config.NumberOfTrailers = 10;
@@ -101,7 +101,7 @@ public sealed partial class TrailerSelectionTests
         var missing = Clip("missing", null, "Horror");
         Watched(older, 20); Watched(recent, 2); Watched(missing, null);
         var result = _provider.SelectTrailers(new Movie { Genres = new[] { "Horror", "Comedy" } }, new[] { recent, low, older, missing, high, high }, _config, _user);
-        Assert.Equal(new[] { high.Id, low.Id, missing.Id, older.Id, recent.Id }, result.Select(t => t.Id));
+        Assert.Equal(new[] { high.Id, low.Id }, result.Select(t => t.Id));
         Assert.Equal(3, _history.Watched.Count);
     }
 
@@ -137,7 +137,7 @@ public sealed partial class TrailerSelectionTests
         var other = Clip("other", null, "Comedy");
         Watched(match, 20);
         var result = _provider.SelectTrailers(new Movie { Genres = new[] { "Horror" } }, new[] { match, other }, _config, _user);
-        Assert.Equal(new[] { other.Id, match.Id }, result.Select(t => t.Id));
+        Assert.Equal(other.Id, Assert.Single(result).Id);
     }
 
     [Fact]
