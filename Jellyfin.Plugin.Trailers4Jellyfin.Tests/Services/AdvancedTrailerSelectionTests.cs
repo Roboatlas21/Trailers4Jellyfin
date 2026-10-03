@@ -106,14 +106,20 @@ public sealed partial class TrailerSelectionTests
     }
 
     [Fact]
-    public void AllWatched_ReplaysOldestRegardlessOfScore()
+    public void AllWatched_ReplaysExactlyOneOldestRegardlessOfConfiguredCount()
     {
         _config.PreferUnwatchedTrailers = true;
-        _config.NumberOfTrailers = 1;
+        _config.NumberOfTrailers = 3;
         var older = Clip("older", null, "Horror");
         var recent = Clip("recent", null, "Horror", "Comedy");
         Watched(older, 20); Watched(recent, 2);
-        Assert.Equal(older.Id, Assert.Single(_provider.SelectTrailers(new Movie { Genres = new[] { "Horror", "Comedy" } }, new[] { recent, older }, _config, _user)).Id);
+        var result = _provider.SelectTrailers(
+            new Movie { Genres = new[] { "Horror", "Comedy" } },
+            new[] { recent, older },
+            _config,
+            _user);
+
+        Assert.Equal(older.Id, Assert.Single(result).Id);
     }
 
     [Fact]

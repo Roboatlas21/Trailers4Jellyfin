@@ -269,7 +269,7 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
                                 .ThenBy(x => x.Trailer.Id);
 
                         return ordered
-                            .Take(config.NumberOfTrailers)
+                            .Take(allEligibleTrailersWatched ? 1 : config.NumberOfTrailers)
                             .Select(x => x.Trailer)
                             .ToList();
                     }
@@ -287,7 +287,8 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
 
             // Legacy popularity mode and safe fallback for missing/corrupt/incomplete ranking
             // state use the same group-level unwatched policy. LastPlayed only participates once
-            // every eligible trailer in the selected group has been watched.
+            // every eligible trailer in the selected group has been watched, and that exhausted
+            // group replays exactly one trailer regardless of NumberOfTrailers.
             var popularityOrdered = allEligibleTrailersWatched
                 ? selectionCandidates
                     .OrderBy(x => x.LastPlayed)
@@ -302,7 +303,7 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
                     .ThenBy(x => x.Trailer.Id);
 
             return popularityOrdered
-                .Take(config.NumberOfTrailers)
+                .Take(allEligibleTrailersWatched ? 1 : config.NumberOfTrailers)
                 .Select(x => x.Trailer)
                 .ToList();
         }
