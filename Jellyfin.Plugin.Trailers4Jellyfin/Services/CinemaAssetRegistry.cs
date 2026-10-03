@@ -81,6 +81,11 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
             return item.ProviderIds?.ContainsKey(EpisodePreRollProviderKey) == true;
         }
 
+        public static bool IsDownloadedTrailer(BaseItem item)
+        {
+            return item.ProviderIds?.ContainsKey(DownloadedTrailerProviderKey) == true;
+        }
+
         private IReadOnlyList<Video> SyncFolder(
             string? folder,
             string providerKey,

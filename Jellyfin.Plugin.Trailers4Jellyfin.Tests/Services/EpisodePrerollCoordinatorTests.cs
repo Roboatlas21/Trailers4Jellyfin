@@ -31,7 +31,9 @@ public sealed class EpisodePrerollCoordinatorTests : IDisposable
     [Fact]
     public void Defaults_UseRequestedFrequency()
     {
-        Assert.Equal(75, _config.EpisodePreRollChancePercent);
+        Assert.Equal(14, _config.EpisodeCommercialOnlyChancePercent);
+        Assert.Equal(6, _config.EpisodeMovieTrailerOnlyChancePercent);
+        Assert.Equal(0, _config.EpisodeBothChancePercent);
         Assert.Equal(60, _config.EpisodePreRollCooldownMinutes);
         Assert.Equal(3, _config.EpisodePreRollMinEpisodes);
         Assert.Equal(2, _config.EpisodePreRollMaxPerWindow);
@@ -39,28 +41,48 @@ public sealed class EpisodePrerollCoordinatorTests : IDisposable
     }
 
     [Theory]
-    [InlineData(0, 0, false)]
-    [InlineData(25, 24, true)]
-    [InlineData(25, 25, false)]
-    [InlineData(75, 74, true)]
-    [InlineData(75, 75, false)]
-    [InlineData(100, 99, true)]
-    [InlineData(-10, 0, false)]
-    [InlineData(110, 99, true)]
-    public async Task Chance_RespectsConfiguredThreshold(int chance, int roll, bool selected)
+    [InlineData(0, EpisodePrerollOutcome.CommercialOnly)]
+    [InlineData(13, EpisodePrerollOutcome.CommercialOnly)]
+    [InlineData(14, EpisodePrerollOutcome.MovieTrailerOnly)]
+    [InlineData(19, EpisodePrerollOutcome.MovieTrailerOnly)]
+    [InlineData(20, EpisodePrerollOutcome.None)]
+    [InlineData(99, EpisodePrerollOutcome.None)]
+    public async Task OutcomeRoll_UsesMutuallyExclusiveConfiguredRanges(
+        int roll,
+        EpisodePrerollOutcome expected)
     {
-        _config.EpisodePreRollChancePercent = chance;
         _random.Rolls.Enqueue(roll);
-        Assert.Equal(selected, (await Select()).HasValue);
+        Assert.Equal(expected, await Select());
+    }
+
+    [Fact]
+    public async Task BothChance_UsesItsOwnRange()
+    {
+        _config.EpisodeCommercialOnlyChancePercent = 10;
+        _config.EpisodeMovieTrailerOnlyChancePercent = 20;
+        _config.EpisodeBothChancePercent = 30;
+        _random.Rolls.Enqueue(30);
+
+        Assert.Equal(EpisodePrerollOutcome.Both, await Select());
+    }
+
+    [Fact]
+    public async Task InvalidChanceTotal_DisablesEpisodeOutcome()
+    {
+        _config.EpisodeCommercialOnlyChancePercent = 100;
+        _config.EpisodeMovieTrailerOnlyChancePercent = 50;
+        _config.EpisodeBothChancePercent = 0;
+
+        Assert.Equal(EpisodePrerollOutcome.None, await Select());
     }
 
     [Fact]
     public async Task LaterRequests_GetFreshRollsWithoutConsumingQuota()
     {
-        _random.Rolls.Enqueue(75);
-        _random.Rolls.Enqueue(74);
-        Assert.Null(await Select());
-        Assert.Equal(_asset, await Select());
+        _random.Rolls.Enqueue(20);
+        _random.Rolls.Enqueue(0);
+        Assert.Equal(EpisodePrerollOutcome.None, await Select());
+        Assert.Equal(EpisodePrerollOutcome.CommercialOnly, await Select());
         Assert.Empty((await State()).PrerollStartsUtc);
     }
 
@@ -72,9 +94,9 @@ public sealed class EpisodePrerollCoordinatorTests : IDisposable
         await Preroll("commercial");
         for (var i = 0; i < 4; i++)
             await Episode(Guid.NewGuid(), "episode-" + i);
-        Assert.Null(await Select());
+        Assert.Equal(EpisodePrerollOutcome.None, await Select());
         await Episode(Guid.NewGuid(), "episode-4");
-        Assert.Equal(_asset, await Select());
+        Assert.Equal(EpisodePrerollOutcome.CommercialOnly, await Select());
     }
 
     [Fact]
@@ -84,9 +106,9 @@ public sealed class EpisodePrerollCoordinatorTests : IDisposable
         _config.EpisodePreRollCooldownMinutes = 30;
         await Preroll("first");
         _clock.Advance(TimeSpan.FromMinutes(29));
-        Assert.Null(await Select());
+        Assert.Equal(EpisodePrerollOutcome.None, await Select());
         _clock.Advance(TimeSpan.FromMinutes(1));
-        Assert.Equal(_asset, await Select());
+        Assert.Equal(EpisodePrerollOutcome.CommercialOnly, await Select());
     }
 
     [Fact]
@@ -99,12 +121,12 @@ public sealed class EpisodePrerollCoordinatorTests : IDisposable
         await Preroll("one");
         _clock.Advance(TimeSpan.FromMinutes(30));
         await Preroll("two");
-        Assert.Equal(_asset, await Select());
+        Assert.Equal(EpisodePrerollOutcome.CommercialOnly, await Select());
         _clock.Advance(TimeSpan.FromMinutes(30));
         await Preroll("three");
-        Assert.Null(await Select());
+        Assert.Equal(EpisodePrerollOutcome.None, await Select());
         _clock.Advance(TimeSpan.FromHours(1));
-        Assert.Equal(_asset, await Select());
+        Assert.Equal(EpisodePrerollOutcome.CommercialOnly, await Select());
     }
 
     [Fact]
@@ -115,7 +137,7 @@ public sealed class EpisodePrerollCoordinatorTests : IDisposable
         _config.EpisodePreRollMaxPerWindow = 0;
         await Preroll("one");
         await Preroll("two");
-        Assert.Equal(_asset, await Select());
+        Assert.Equal(EpisodePrerollOutcome.CommercialOnly, await Select());
     }
 
     [Fact]
@@ -126,8 +148,8 @@ public sealed class EpisodePrerollCoordinatorTests : IDisposable
         Assert.Equal(0, (await State()).EpisodesSincePreroll);
         _clock.Advance(TimeSpan.FromHours(5));
         _config.EpisodePreRollMinEpisodes = 0;
-        Assert.Null(await Select(isResume: true));
-        Assert.Equal(_asset, await Select());
+        Assert.Equal(EpisodePrerollOutcome.None, await Select(isResume: true));
+        Assert.Equal(EpisodePrerollOutcome.CommercialOnly, await Select());
     }
 
     [Theory]
@@ -168,23 +190,48 @@ public sealed class EpisodePrerollCoordinatorTests : IDisposable
         _config.EpisodePreRollWindowHours = 1;
         await Preroll("one");
         _clock.Advance(TimeSpan.FromHours(5));
-        Assert.Equal(_asset, await Select());
+        Assert.Equal(EpisodePrerollOutcome.CommercialOnly, await Select());
         _config.EpisodePreRollWindowHours = 6;
         var reloadedStore = new EpisodePrerollStateStore(Path.Combine(_directory, "history.json"), NullLogger<EpisodePrerollStateStore>.Instance);
         using var restarted = new EpisodePrerollCoordinator(reloadedStore, NullLogger<EpisodePrerollCoordinator>.Instance, _clock, _random);
-        Assert.Null(await restarted.SelectPrerollAsync(_user, new[] { _asset }, false, _config, Token));
+        Assert.Equal(
+            EpisodePrerollOutcome.None,
+            await restarted.SelectOutcomeAsync(_user, false, _config, Token));
     }
 
     [Fact]
     public async Task Users_HaveIndependentHistory()
     {
         await Preroll("first");
-        Assert.Equal(_asset, await _coordinator.SelectPrerollAsync(Guid.NewGuid(), new[] { _asset }, false, _config, Token));
-        Assert.Null(await Select());
+        Assert.Equal(
+            EpisodePrerollOutcome.CommercialOnly,
+            await _coordinator.SelectOutcomeAsync(Guid.NewGuid(), false, _config, Token));
+        Assert.Equal(EpisodePrerollOutcome.None, await Select());
+    }
+
+    [Fact]
+    public async Task PendingMovieTrailerStart_CountsAsOneEpisodePrerollEvent()
+    {
+        var trailer = Guid.NewGuid();
+        await _coordinator.RegisterPendingMovieTrailerAsync(_user, trailer, Token);
+
+        Assert.True(await _coordinator.RecordPendingMovieTrailerStartedAsync(
+            _user,
+            trailer,
+            "episode-trailer",
+            _config,
+            Token));
+        Assert.False(await _coordinator.RecordPendingMovieTrailerStartedAsync(
+            _user,
+            trailer,
+            "episode-trailer",
+            _config,
+            Token));
+        Assert.Single((await State()).PrerollStartsUtc);
     }
 
     private EpisodePrerollCoordinator NewCoordinator() => new(_store, NullLogger<EpisodePrerollCoordinator>.Instance, _clock, _random);
-    private Task<Guid?> Select(bool isResume = false) => _coordinator.SelectPrerollAsync(_user, new[] { _asset }, isResume, _config, Token);
+    private Task<EpisodePrerollOutcome> Select(bool isResume = false) => _coordinator.SelectOutcomeAsync(_user, isResume, _config, Token);
     private Task Episode(Guid episode, string? session) => _coordinator.RecordEpisodeStartedAsync(_user, episode, 0, session, _config, Token);
     private Task Preroll(string? session) => _coordinator.RecordPrerollStartedAsync(_user, _asset, session, _config, Token);
     private Task<EpisodePrerollUserState> State() => _store.LoadUserAsync(_user, _clock.GetUtcNow(), Token);

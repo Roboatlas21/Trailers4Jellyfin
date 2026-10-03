@@ -26,9 +26,15 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
             try
             {
                 var config = Plugin.Instance?.Configuration;
+                var totalEpisodeChance = config == null
+                    ? 0
+                    : Math.Clamp(config.EpisodeCommercialOnlyChancePercent, 0, 100)
+                        + Math.Clamp(config.EpisodeMovieTrailerOnlyChancePercent, 0, 100)
+                        + Math.Clamp(config.EpisodeBothChancePercent, 0, 100);
+
                 if (config == null || !config.EnableCinemaMode
-                    || string.IsNullOrWhiteSpace(config.EpisodePreRollFolder)
-                    || config.EpisodePreRollChancePercent <= 0
+                    || totalEpisodeChance <= 0
+                    || totalEpisodeChance > 100
                     || eventArgs.Item == null || eventArgs.Users.Count == 0)
                     return;
 
@@ -40,6 +46,18 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
                     await _coordinator
                         .RecordPrerollStartedAsync(userId, item.Id, eventArgs.PlaySessionId, config)
                         .ConfigureAwait(false);
+                    return;
+                }
+
+                if (CinemaAssetRegistry.IsDownloadedTrailer(item)
+                    && await _coordinator
+                        .RecordPendingMovieTrailerStartedAsync(
+                            userId,
+                            item.Id,
+                            eventArgs.PlaySessionId,
+                            config)
+                        .ConfigureAwait(false))
+                {
                     return;
                 }
 

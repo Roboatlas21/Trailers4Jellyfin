@@ -66,6 +66,9 @@ public sealed class ConfigurationDefaultsTests
         Assert.Equal(100, config.MaxTotalTrailers);
         Assert.Equal(20, config.MaxTrailersToDownload);
         Assert.Equal(4, config.MaxPagesPerSource);
+        Assert.Equal(14, config.EpisodeCommercialOnlyChancePercent);
+        Assert.Equal(6, config.EpisodeMovieTrailerOnlyChancePercent);
+        Assert.Equal(0, config.EpisodeBothChancePercent);
         Assert.Equal(TrailerPoolRankingMode.LifecycleScore, config.PoolRankingMode);
         Assert.Equal(TrailerPlaybackRankingMode.Score, config.PlaybackRankingMode);
         Assert.True(config.ApplyPlaybackReleaseBoost);

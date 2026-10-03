@@ -58,7 +58,7 @@
                             </label>
                             <div class="fieldDescription checkboxFieldDescription">
                                 Enables Trailers4Jellyfin intros for movies and TV episodes. Individual stages remain disabled
-                                when their folder is blank, trailer count is 0, or episode chance is 0%. Default: On.
+                                when their folder is blank, trailer count is 0, or all episode outcome chances are 0%. Default: On.
                             </div>
                         </div>
                     </fieldset>
@@ -189,8 +189,8 @@
                     <fieldset class="verticalSection verticalSection-extrabottompadding">
                         <legend><h3 class="sectionTitle">Shows</h3></legend>
                         <p class="fieldDescription">
-                            Configure optional clips before TV episodes.<br />
-                            Playback order: <strong>Episode Pre-Roll → Episode</strong><br />
+                            Configure occasional commercials and movie trailers before TV episodes.<br />
+                            Playback order: <strong>Commercial → Movie Trailer → Episode</strong> when both are selected.<br />
                             Episodes with an existing resume position are skipped.
                         </p>
 
@@ -216,12 +216,28 @@
                             </div>
                         </div>
                         <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="episode-preroll-chance">Chance per eligible episode (%)</label>
-                            <input type="number" id="episode-preroll-chance" is="emby-input" min="0" max="100" step="1" required />
+                            <label class="inputLabel inputLabelUnfocused" for="episode-commercial-only-chance">Episode commercial-only chance (%)</label>
+                            <input type="number" id="episode-commercial-only-chance" is="emby-input" min="0" max="100" step="1" required />
                             <div class="fieldDescription">
-                                Probability of playing a pre-roll after cooldown, spacing, and quota rules have passed.
-                                Set to 0% to disable episode pre-rolls. Default: 75%.
+                                Chance that an eligible episode plays one commercial/pre-roll clip and no movie trailer. Default: 14%.
                             </div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="episode-movie-trailer-only-chance">Episode movie trailer-only chance (%)</label>
+                            <input type="number" id="episode-movie-trailer-only-chance" is="emby-input" min="0" max="100" step="1" required />
+                            <div class="fieldDescription">
+                                Chance that an eligible episode plays one downloaded <strong>movie trailer</strong> and no commercial. Default: 6%.
+                            </div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="episode-both-chance">Episode both chance (%)</label>
+                            <input type="number" id="episode-both-chance" is="emby-input" min="0" max="100" step="1" required />
+                            <div class="fieldDescription">
+                                Chance that an eligible episode plays a commercial followed by one <strong>movie trailer</strong>. Default: 0%.
+                            </div>
+                        </div>
+                        <div class="fieldDescription" id="episode-chance-summary" style="margin-bottom:1em">
+                            Nothing: 80%. Commercial-only + movie trailer-only + both must total 100% or less.
                         </div>
                         <div class="inputContainer">
                             <label class="inputLabel inputLabelUnfocused" for="episode-preroll-cooldown">Minimum time between pre-rolls (minutes)</label>
@@ -653,7 +669,10 @@
                     document.getElementById('skip-current-movie-trailers').checked = config.SkipCurrentMovieTrailers !== false;
                     document.getElementById('feature-preroll-folder').value  = config.FeaturePreRollFolder || '';
                     document.getElementById('episode-preroll-folder').value  = config.EpisodePreRollFolder || '';
-                    document.getElementById('episode-preroll-chance').value = config.EpisodePreRollChancePercent ?? 75;
+                    document.getElementById('episode-commercial-only-chance').value = config.EpisodeCommercialOnlyChancePercent ?? 14;
+                    document.getElementById('episode-movie-trailer-only-chance').value = config.EpisodeMovieTrailerOnlyChancePercent ?? 6;
+                    document.getElementById('episode-both-chance').value = config.EpisodeBothChancePercent ?? 0;
+                    updateEpisodeChanceSummary();
                     document.getElementById('episode-preroll-cooldown').value = config.EpisodePreRollCooldownMinutes ?? 60;
                     document.getElementById('episode-preroll-spacing').value = config.EpisodePreRollMinEpisodes ?? 3;
                     document.getElementById('episode-preroll-limit').value = config.EpisodePreRollMaxPerWindow ?? 2;
@@ -697,7 +716,32 @@
                 });
             });
 
+            function updateEpisodeChanceSummary() {
+                var commercial = readNumber('episode-commercial-only-chance', 14);
+                var movieTrailer = readNumber('episode-movie-trailer-only-chance', 6);
+                var both = readNumber('episode-both-chance', 0);
+                var total = commercial + movieTrailer + both;
+                var summary = document.getElementById('episode-chance-summary');
+                var bothInput = document.getElementById('episode-both-chance');
+                var message = total <= 100
+                    ? 'Nothing: ' + (100 - total) + '%. Commercial-only + movie trailer-only + both must total 100% or less.'
+                    : 'Invalid: configured episode outcomes total ' + total + '%. Reduce them to 100% or less.';
+                summary.textContent = message;
+                bothInput.setCustomValidity(total <= 100 ? '' : 'Episode outcome chances cannot total more than 100%.');
+                return total <= 100;
+            }
+
+            ['episode-commercial-only-chance', 'episode-movie-trailer-only-chance', 'episode-both-chance']
+                .forEach(function (id) {
+                    document.getElementById(id).addEventListener('input', updateEpisodeChanceSummary);
+                });
+
             $('.trailers4JellyfinConfigPage').on('submit', function () {
+                if (!updateEpisodeChanceSummary()) {
+                    document.getElementById('episode-both-chance').reportValidity();
+                    return false;
+                }
+
                 Dashboard.showLoadingMsg();
                 ApiClient.getPluginConfiguration(pluginId).then(function (config) {
                     config.TmdbApiKey             = document.getElementById('tmdb-api-key').value;
@@ -714,7 +758,9 @@
                     config.SkipCurrentMovieTrailers = document.getElementById('skip-current-movie-trailers').checked;
                     config.FeaturePreRollFolder   = document.getElementById('feature-preroll-folder').value;
                     config.EpisodePreRollFolder   = document.getElementById('episode-preroll-folder').value;
-                    config.EpisodePreRollChancePercent = readNumber('episode-preroll-chance', 75);
+                    config.EpisodeCommercialOnlyChancePercent = readNumber('episode-commercial-only-chance', 14);
+                    config.EpisodeMovieTrailerOnlyChancePercent = readNumber('episode-movie-trailer-only-chance', 6);
+                    config.EpisodeBothChancePercent = readNumber('episode-both-chance', 0);
                     config.EpisodePreRollCooldownMinutes = readNumber('episode-preroll-cooldown', 60);
                     config.EpisodePreRollMinEpisodes = readNumber('episode-preroll-spacing', 3);
                     config.EpisodePreRollMaxPerWindow = readNumber('episode-preroll-limit', 2);

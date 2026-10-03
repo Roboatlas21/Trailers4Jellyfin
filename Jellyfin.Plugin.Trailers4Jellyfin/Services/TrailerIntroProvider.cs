@@ -68,39 +68,79 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
         private async Task<IEnumerable<IntroInfo>> GetEpisodeIntrosAsync(Episode episode, User user)
         {
             var config = Plugin.Instance?.Configuration;
-            if (config == null || !config.EnableCinemaMode || config.EpisodePreRollChancePercent <= 0)
+            if (config == null || !config.EnableCinemaMode)
+                return Enumerable.Empty<IntroInfo>();
+
+            var totalChance = Math.Clamp(config.EpisodeCommercialOnlyChancePercent, 0, 100)
+                + Math.Clamp(config.EpisodeMovieTrailerOnlyChancePercent, 0, 100)
+                + Math.Clamp(config.EpisodeBothChancePercent, 0, 100);
+            if (totalChance <= 0 || totalChance > 100)
                 return Enumerable.Empty<IntroInfo>();
 
             var isResume = _userDataManager.GetUserData(user, episode)?.PlaybackPositionTicks > 0;
             if (isResume)
                 return Enumerable.Empty<IntroInfo>();
 
-            var episodePreRolls = GetPreferredClips(
-                _assetRegistry.SyncEpisodePreRolls(config.EpisodePreRollFolder), user, config.PreferUnwatchedEpisodePreRolls);
-            if (episodePreRolls.Count == 0)
-                return Enumerable.Empty<IntroInfo>();
-
-            var selectedId = await _episodePrerollCoordinator
-                .SelectPrerollAsync(
-                    user.Id,
-                    episodePreRolls.Select(static p => p.Id).ToArray(),
-                    isResume,
-                    config)
+            var outcome = await _episodePrerollCoordinator
+                .SelectOutcomeAsync(user.Id, isResume, config)
                 .ConfigureAwait(false);
-
-            if (!selectedId.HasValue)
+            if (outcome == EpisodePrerollOutcome.None)
                 return Enumerable.Empty<IntroInfo>();
 
-            var selected = episodePreRolls.FirstOrDefault(p => p.Id == selectedId.Value);
-            if (selected == null)
+            var commercialCandidates = GetPreferredClips(
+                _assetRegistry.SyncEpisodePreRolls(config.EpisodePreRollFolder),
+                user,
+                config.PreferUnwatchedEpisodePreRolls);
+
+            Video? commercial = null;
+            if (outcome is EpisodePrerollOutcome.CommercialOnly or EpisodePrerollOutcome.Both
+                && commercialCandidates.Count > 0)
+            {
+                commercial = commercialCandidates[Random.Shared.Next(commercialCandidates.Count)];
+            }
+
+            Video? movieTrailer = null;
+            if (outcome is EpisodePrerollOutcome.MovieTrailerOnly or EpisodePrerollOutcome.Both)
+            {
+                var downloadedTrailers = _assetRegistry.SyncDownloadedTrailers(config.DownloadFolder);
+                movieTrailer = SelectTrailers(
+                        episode,
+                        downloadedTrailers,
+                        config,
+                        user,
+                        maximumTrailers: 1,
+                        skipCurrentFeature: false)
+                    .FirstOrDefault();
+            }
+
+            // "Both" degrades gracefully when one source is unavailable. A trailer-only
+            // effective result is marked pending so PlaybackStart counts it as exactly one
+            // episode pre-roll event. When both clips exist, the commercial starts first and
+            // owns the shared cooldown/spacing/quota event; the following trailer does not.
+            if (commercial == null && movieTrailer == null)
                 return Enumerable.Empty<IntroInfo>();
+
+            if (commercial == null && movieTrailer != null)
+            {
+                await _episodePrerollCoordinator
+                    .RegisterPendingMovieTrailerAsync(user.Id, movieTrailer.Id)
+                    .ConfigureAwait(false);
+            }
+
+            var intros = new List<IntroInfo>(2);
+            if (commercial != null)
+                intros.Add(ToIntroInfo(commercial));
+            if (movieTrailer != null)
+                intros.Add(ToIntroInfo(movieTrailer));
 
             _logger.LogInformation(
-                "|Trailers4Jellyfin| Queuing episode pre-roll '{PreRoll}' before '{Episode}'",
-                selected.Name,
-                episode.Name);
+                "|Trailers4Jellyfin| Queuing episode intro outcome {Outcome} before '{Episode}' ({Commercials} commercial, {MovieTrailers} movie trailer)",
+                outcome,
+                episode.Name,
+                commercial != null ? 1 : 0,
+                movieTrailer != null ? 1 : 0);
 
-            return new[] { ToIntroInfo(selected) };
+            return intros;
         }
 
         private Task<IEnumerable<IntroInfo>> GetIntrosInternal(BaseItem item, User user)
@@ -142,9 +182,12 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
             BaseItem feature,
             IReadOnlyList<Video> trailerItems,
             Configuration.PluginConfiguration config,
-            User user)
+            User user,
+            int? maximumTrailers = null,
+            bool skipCurrentFeature = true)
         {
-            if (config.NumberOfTrailers <= 0 || trailerItems.Count == 0)
+            var trailerLimit = maximumTrailers ?? config.NumberOfTrailers;
+            if (trailerLimit <= 0 || trailerItems.Count == 0)
                 return new List<Video>();
 
             var country = _ratings.GetMetadataCountry(feature);
@@ -155,7 +198,7 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
             var candidates = trailerItems.DistinctBy(t => t.Id)
                 .Select(t => (Trailer: t, Metadata: ReadMetadata(t.Path)))
                 .Where(x => x.Metadata != null && _ratings.IsAllowed(x.Metadata, country, movieRating, user))
-                .Where(x => !config.SkipCurrentMovieTrailers || featureTmdbId == null || x.Metadata!.TmdbId != featureTmdbId)
+                .Where(x => !skipCurrentFeature || !config.SkipCurrentMovieTrailers || featureTmdbId == null || x.Metadata!.TmdbId != featureTmdbId)
                 .Select(x => (x.Trailer, Metadata: x.Metadata!, Genres: TrailerGenres.Normalize(x.Metadata!.Genres)))
                 .ToList();
 
@@ -269,7 +312,7 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
                                 .ThenBy(x => x.Trailer.Id);
 
                         return ordered
-                            .Take(allEligibleTrailersWatched ? 1 : config.NumberOfTrailers)
+                            .Take(allEligibleTrailersWatched ? 1 : trailerLimit)
                             .Select(x => x.Trailer)
                             .ToList();
                     }
@@ -303,7 +346,7 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
                     .ThenBy(x => x.Trailer.Id);
 
             return popularityOrdered
-                .Take(allEligibleTrailersWatched ? 1 : config.NumberOfTrailers)
+                .Take(allEligibleTrailersWatched ? 1 : trailerLimit)
                 .Select(x => x.Trailer)
                 .ToList();
         }

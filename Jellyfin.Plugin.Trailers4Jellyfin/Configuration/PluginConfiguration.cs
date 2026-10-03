@@ -93,7 +93,19 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Configuration
         public bool PreferUnwatchedFeaturePreRolls { get; set; } = true;
         public string EpisodePreRollFolder { get; set; } = string.Empty;
         public bool PreferUnwatchedEpisodePreRolls { get; set; } = true;
+
+        /// <summary>Legacy serialized setting retained for upgrade compatibility; no longer used for selection.</summary>
         public int EpisodePreRollChancePercent { get; set; } = 75;
+
+        /// <summary>Chance that an eligible episode gets only a commercial/pre-roll clip.</summary>
+        public int EpisodeCommercialOnlyChancePercent { get; set; } = 14;
+
+        /// <summary>Chance that an eligible episode gets only one downloaded movie trailer.</summary>
+        public int EpisodeMovieTrailerOnlyChancePercent { get; set; } = 6;
+
+        /// <summary>Chance that an eligible episode gets a commercial followed by one movie trailer.</summary>
+        public int EpisodeBothChancePercent { get; set; } = 0;
+
         public int EpisodePreRollCooldownMinutes { get; set; } = 60;
         public int EpisodePreRollMinEpisodes { get; set; } = 3;
         public int EpisodePreRollMaxPerWindow { get; set; } = 2;
