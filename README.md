@@ -2,7 +2,7 @@
 
 A Jellyfin plugin that automatically downloads movie trailers from TMDB/YouTube and plays them through Jellyfin Cinema Mode.
 
-This branch also manages optional trailer pre-roll and feature pre-roll folders without requiring any of those folders to be exposed as normal Jellyfin libraries.
+This branch also manages optional trailer pre-roll and movie pre-roll folders without requiring any of those folders to be exposed as normal Jellyfin libraries.
 
 ## Cinema Mode order
 
@@ -11,7 +11,7 @@ When Cinema Mode is enabled, the plugin returns intros in this order:
 ```text
 Trailer Pre-Roll
 → Downloaded Trailer(s)
-→ Feature Pre-Roll
+→ Movie Pre-Roll
 → Movie
 ```
 
@@ -19,12 +19,12 @@ Each configured pre-roll folder contributes one random video. Leave either folde
 
 ## Private Cinema Mode assets
 
-Trailers, trailer pre-rolls, and feature pre-rolls are registered as private, unparented Jellyfin video items. This follows the same architecture used by Local Intros Extended: the plugin creates internal Jellyfin items with its own provider IDs and returns those ItemIds through `IIntroProvider`.
+Trailers, trailer pre-rolls, and movie pre-rolls are registered as private, unparented Jellyfin video items. This follows the same architecture used by Local Intros Extended: the plugin creates internal Jellyfin items with its own provider IDs and returns those ItemIds through `IIntroProvider`.
 
 Because the items do not belong to a normal media library:
 
 - You do **not** need a visible `Trailers` library.
-- You do **not** need visible trailer/feature pre-roll libraries.
+- You do **not** need visible trailer/movie pre-roll libraries.
 - Users do not need library access to those helper assets.
 - The assets do not create normal library navigation or Recently Added rows.
 - Jellyfin still gets stable ItemIds for playback and watched-state tracking.
@@ -82,7 +82,20 @@ Copy the built plugin files into the Jellyfin plugin directory and restart Jelly
 
 Go to **Admin → Plugins → Trailers4Jellyfin**.
 
-Use **Browse** beside any folder field to select a folder on the Jellyfin server, then press **Save**. In Docker, the picker shows paths inside the Jellyfin container; the host media folders must be mapped into it. Manual path entry is also supported.
+The settings page follows the setup flow:
+
+1. **TMDB** — API key or Read Access Token.
+2. **Cinema Mode** — global intro-provider toggle.
+3. **Movies** — Trailer Pre-Roll → downloaded Trailer(s) → Movie Pre-Roll.
+4. **Shows** — Episode Pre-Roll settings.
+5. **Trailer Discovery** — In Theatres, Coming Soon, Popular, Top Rated, release windows, and languages.
+6. **Trailer Download Filters** — per-run limits, budget/runtime filters, quality, and library/download checks.
+7. **Trailer Pool** — ranked-pool target size.
+8. **Advanced** — yt-dlp, ffmpeg, and YouTube cookies.
+
+Every setting description in the plugin UI includes its current default. Existing serialized config keys are intentionally retained even when a UI label changes (for example, Movie Pre-Roll still uses the legacy `FeaturePreRollFolder` key), so saved settings remain compatible.
+
+Use **Browse** beside any folder field to select a folder on the Jellyfin server, then press **Save**. In Docker, the picker shows paths inside the Jellyfin container; host media folders must be mapped into it. Manual path entry is also supported.
 
 ### Cinema Mode
 
@@ -94,9 +107,9 @@ Use **Browse** beside any folder field to select a folder on the Jellyfin server
 | **Match trailers to movie genre** | Direct matches, then related matches, then general fallback; default on |
 | **Skip trailers for movies this user has already watched** | Excludes a trailer if any matching TMDB movie copy is watched by this user; default on |
 | **Skip trailers for the movie being played** | Excludes all trailers advertising the current TMDB movie; default on |
-| **Feature Pre-Roll Folder** | Optional folder; one random video plays after trailers and before the movie |
+| **Movie Pre-Roll Folder** | Optional folder; one random video plays after trailers and before the movie |
 
-Each clip type has its own **Prefer unwatched** checkbox: trailer pre-rolls, trailers, feature pre-rolls, and episode pre-rolls. All four default to on. Existing saved values, including explicit off choices, are preserved; missing values use the new default. When enabled, the plugin prefers clips Jellyfin has not marked watched for the current user's ID; each user's history is independent, and no visible media library is required.
+Each clip type has its own **Prefer unwatched** checkbox: trailer pre-rolls, trailers, movie pre-rolls, and episode pre-rolls. All four default to on. Existing saved values, including explicit off choices, are preserved; missing values use the new default. When enabled, the plugin prefers clips Jellyfin has not marked watched for the current user's ID; each user's history is independent, and no visible media library is required.
 
 Pre-rolls are chosen randomly from the unwatched clips, falling back to the full pool once all are watched. Their selection behavior and episode frequency limits are unchanged. Selection does not mark a clip watched or reset watched history; Jellyfin's playback tracking determines that status.
 
@@ -190,7 +203,7 @@ Results are merged and deduplicated by TMDB movie ID. The final pool is ranked b
 | Setting | Default | Description |
 |---|---:|---|
 | **TMDB API Key** | — | TMDB v3 API key or read-access token |
-| **Download Folder** | — | Where downloaded trailers and metadata sidecars are stored |
+| **Downloaded Trailer Folder** | — | Where downloaded trailers and metadata sidecars are stored |
 | **Max trailers per run** | 20 | Maximum successful new downloads in one scheduled run |
 | **Pages per source** | 3 | TMDB pages fetched from each enabled source |
 | **Minimum movie budget** | $10,000,000 | Reliable known budgets below this amount are excluded |
