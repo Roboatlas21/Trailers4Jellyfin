@@ -231,13 +231,16 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
                 .OrderForPool(evaluations, config)
                 .ToList();
 
-            // LifecycleScore already applies budget/runtime and all score eligibility rules.
-            // Popularity mode deliberately preserves the legacy ranking formula, but it still
-            // uses the common budget/runtime filters before a movie can occupy a pool slot.
+            // LifecycleScore already applies the configured lifecycle windows, budget/runtime,
+            // and all score eligibility rules. Popularity mode preserves the legacy ranking
+            // formula, but shares the same configured lifecycle windows and common filters.
             if (config.PoolRankingMode == Configuration.TrailerPoolRankingMode.Popularity)
             {
                 orderedEvaluations = orderedEvaluations
-                    .Where(e => e.Score.DaysFromRelease is >= -180 and <= 365)
+                    .Where(e => TrailerRankingService.GetLifecycleWindowExclusionReason(
+                        e.Candidate.LifecycleReleaseDate,
+                        config,
+                        today) is null)
                     .Where(e => TmdbService.MeetsMovieDetailsRequirements(
                         new TmdbMovieDetails(e.Candidate.Budget, e.Candidate.Runtime),
                         config.MinimumMovieBudget,

@@ -8,8 +8,6 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services;
 
 public sealed class TrailerRankingService
 {
-    private const int MaxFutureDays = 180;
-    private const int MaxReleaseAgeDays = 365;
     private const int CurrentTheatricalMaxAgeDays = 60;
 
     private const int LimitedReleaseWideWindowDays = 60;
@@ -108,10 +106,12 @@ public sealed class TrailerRankingService
             return EmptyScore(candidate, reasons, p, r, ratingConfidence, rConf, v, qUncapped);
         }
 
-        if (t < -MaxFutureDays)
-            reasons.Add($"release is {-t.Value} days away (> {MaxFutureDays})");
-        if (t > MaxReleaseAgeDays)
-            reasons.Add($"release is {t.Value} days old (> {MaxReleaseAgeDays})");
+        var lifecycleWindowExclusion = GetLifecycleWindowExclusionReason(
+            candidate.LifecycleReleaseDate,
+            config,
+            today);
+        if (lifecycleWindowExclusion != null)
+            reasons.Add(lifecycleWindowExclusion);
 
         var budgetMetadataFloor = Math.Max(0, config.BudgetMetadataFloor);
         var reliableBudget = candidate.Budget is > 0 && candidate.Budget.Value >= budgetMetadataFloor
@@ -471,6 +471,39 @@ public sealed class TrailerRankingService
 
         var evidencePenalty = LimitedMaxPenalty * (1.0 - evidenceSupport) * ageFactor;
         return Math.Max(minimumPenalty, evidencePenalty);
+    }
+
+    internal static string? GetLifecycleWindowExclusionReason(
+        DateOnly? lifecycleReleaseDate,
+        PluginConfiguration config,
+        DateOnly today)
+    {
+        if (!lifecycleReleaseDate.HasValue)
+            return "no usable lifecycle release date";
+
+        var releaseDate = lifecycleReleaseDate.Value;
+        if (releaseDate > today && config.UpcomingReleaseDateRangeMonths > 0)
+        {
+            var latestUpcomingDate = today.AddMonths(config.UpcomingReleaseDateRangeMonths);
+            if (releaseDate > latestUpcomingDate)
+            {
+                return $"release date {releaseDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)} "
+                    + $"is beyond configured {config.UpcomingReleaseDateRangeMonths}-month upcoming window "
+                    + $"ending {latestUpcomingDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}";
+            }
+        }
+        else if (releaseDate < today && config.ReleaseDateRangeMonths > 0)
+        {
+            var earliestReleasedDate = today.AddMonths(-config.ReleaseDateRangeMonths);
+            if (releaseDate < earliestReleasedDate)
+            {
+                return $"release date {releaseDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)} "
+                    + $"is before configured {config.ReleaseDateRangeMonths}-month released window "
+                    + $"starting {earliestReleasedDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}";
+            }
+        }
+
+        return null;
     }
 
     internal static double CalculatePlaybackBoost(int daysFromRelease)
