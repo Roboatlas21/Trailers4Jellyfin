@@ -38,10 +38,11 @@ Downloaded trailers keep a JSON sidecar next to each video. The sidecar stores:
 - TMDB movie ID
 - title
 - year
+- current raw TMDB popularity
 - genres
 - regional parental certifications with their country codes
 
-Genre matching reads the sidecar directly, so it does not depend on a Jellyfin Trailers library.
+Genre matching reads the sidecar directly, so it does not depend on a Jellyfin Trailers library. The scheduled download task also refreshes the raw TMDB popularity stored in existing sidecars whenever that movie appears in the current candidate fetch; trailers outside the current candidate set retain their last-known value. The Coming Soon 3× pool-ranking multiplier is not written to the sidecar.
 
 Parental-rating filtering uses Jellyfin's country-aware rating scores, including subratings. Certifications are tried in the movie library's metadata country (or server country), then US, CA, GB, AU, then other countries alphabetically. Within a country, theatrical certifications take priority, followed by limited theatrical, digital, TV, physical and other releases. Missing, NR and unrecognized entries are skipped until a usable rating is found; ratings are never selected by lowest age.
 
@@ -104,7 +105,7 @@ Pre-rolls are chosen randomly from the unwatched clips, falling back to the full
 1. Apply parental-rating restrictions, then both optional movie exclusions. Match movies only by reliable TMDB IDs; absent or unmatched movies remain eligible. One watched matching library copy excludes the trailer for that user. These are firm selection exclusions, never reversed by a fallback and never deleting files. The separate **Skip movies already in library** download option is unchanged.
 2. Choose the first nonempty group: direct genre matches, related genre matches, then all remaining eligible trailers. A watched direct match still wins over an unwatched related or unrelated trailer. With genre matching off (or no usable movie genres), use the general group.
 3. Score direct matches by distinct genres shared with the feature. Score related matches by distinct genres shared with the combined related-genre list. General matches have equal score. Genre comparisons ignore case; duplicates never increase scores.
-4. With **Prefer unwatched trailers** on, take unwatched trailers in descending score order, then watched trailers by oldest last-played time, ignoring their scores. A watched trailer with no date is oldest. With the preference off, ignore trailer history and use descending score for every slot. Randomize equal scores/dates.
+4. With **Prefer unwatched trailers** on, take unwatched trailers in descending genre-match score order, using raw TMDB popularity as the tie-breaker. Only after the unwatched choices are exhausted do watched trailers participate; watched trailers replay by oldest last-played time first, with popularity breaking equal replay dates. A watched trailer with no date is oldest. With the preference off, ignore trailer history and rank by genre-match score, then popularity. Exact popularity ties use stable IDs rather than random ordering.
 5. Fill only from the chosen group, without duplicate clip IDs. If it contains fewer clips than requested, play fewer; never move to another group just to fill the count.
 
 The trailer's own Jellyfin watched flag and last-played date belong to the current user. Missing watched records are unwatched, and queuing does not record a watch. Full movie history is used only by the watched-movie exclusion.

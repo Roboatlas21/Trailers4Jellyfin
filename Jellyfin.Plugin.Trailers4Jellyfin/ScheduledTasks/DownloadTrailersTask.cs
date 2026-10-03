@@ -161,6 +161,11 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
             _logger.LogInformation("|Trailers4Jellyfin| Fetching ranked candidates from TMDB...");
             var candidates = await _tmdbService.GetCandidateMoviesAsync(config, cancellationToken).ConfigureAwait(false);
 
+            await RefreshTrailerPopularitiesAsync(
+                registeredTrailers,
+                candidates,
+                cancellationToken).ConfigureAwait(false);
+
             if (config.SkipMoviesInLibrary)
             {
                 candidates = candidates
@@ -405,10 +410,42 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.ScheduledTasks
                 tmdbId = movie.Id,
                 title = movie.Title,
                 year = movie.Year,
+                popularity = movie.Popularity,
                 genres,
                 certifications,
             });
             await TrailerMetadataRefresh.WriteAsync(sidecarPath, json, ct).ConfigureAwait(false);
+        }
+
+        private async Task RefreshTrailerPopularitiesAsync(
+            IReadOnlyList<Video> registeredTrailers,
+            IReadOnlyList<TmdbMovieResult> candidates,
+            CancellationToken ct)
+        {
+            var popularityById = candidates.ToDictionary(m => m.Id, m => m.Popularity);
+
+            foreach (var trailer in registeredTrailers)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                var tmdbId = ReadTrailerTmdbId(trailer.Path);
+                if (tmdbId is not int id || !popularityById.TryGetValue(id, out var popularity))
+                    continue;
+
+                try
+                {
+                    await TrailerMetadataRefresh
+                        .UpdatePopularityAsync(trailer.Path, popularity, ct)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+                {
+                    _logger.LogWarning(
+                        ex,
+                        "|Trailers4Jellyfin| Could not refresh trailer popularity: {Path}",
+                        trailer.Path);
+                }
+            }
         }
 
         private HashSet<string> GetLibraryTmdbIds()

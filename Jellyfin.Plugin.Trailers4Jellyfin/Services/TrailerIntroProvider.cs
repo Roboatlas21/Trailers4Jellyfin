@@ -185,12 +185,15 @@ namespace Jellyfin.Plugin.Trailers4Jellyfin.Services
                 {
                     history.TryGetValue(x.Trailer.Id, out var data);
                     return (x.Trailer, Score: x.Genres.Count(scoringGenres.Contains),
-                        Played: data?.Played == true, LastPlayed: data?.LastPlayedDate ?? DateTime.MinValue);
+                        Played: data?.Played == true, LastPlayed: data?.LastPlayedDate ?? DateTime.MinValue,
+                        Popularity: x.Metadata.Popularity ?? 0, TmdbId: x.Metadata.TmdbId ?? int.MaxValue);
                 })
                 .OrderBy(x => x.Played)
                 .ThenByDescending(x => x.Played ? 0 : x.Score)
                 .ThenBy(x => x.Played ? x.LastPlayed : DateTime.MinValue)
-                .ThenBy(_ => Random.Shared.Next())
+                .ThenByDescending(x => x.Popularity)
+                .ThenBy(x => x.TmdbId)
+                .ThenBy(x => x.Trailer.Id)
                 .Take(config.NumberOfTrailers)
                 .Select(x => x.Trailer)
                 .ToList();

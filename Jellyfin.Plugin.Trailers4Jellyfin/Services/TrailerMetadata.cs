@@ -18,6 +18,9 @@ internal sealed class TrailerMetadata
     [JsonPropertyName("genres")]
     public string[]? Genres { get; set; }
 
+    [JsonPropertyName("popularity")]
+    public double? Popularity { get; set; }
+
     // Kept for legacy sidecars; a bare label has no reliable country until refreshed.
     [JsonPropertyName("officialRating")]
     public string? OfficialRating { get; set; }

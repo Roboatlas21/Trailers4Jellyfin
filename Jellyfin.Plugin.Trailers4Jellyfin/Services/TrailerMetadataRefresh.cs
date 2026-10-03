@@ -24,6 +24,22 @@ internal static class TrailerMetadataRefresh
         await WriteAsync(path, JsonSerializer.Serialize(metadata), ct).ConfigureAwait(false);
     }
 
+    internal static async Task UpdatePopularityAsync(
+        string trailerPath,
+        double popularity,
+        CancellationToken ct)
+    {
+        var path = Path.ChangeExtension(trailerPath, ".json");
+        if (!File.Exists(path)) return;
+
+        var metadata = JsonSerializer.Deserialize<TrailerMetadata>(
+            await File.ReadAllTextAsync(path, ct).ConfigureAwait(false));
+        if (metadata == null || metadata.Popularity == popularity) return;
+
+        metadata.Popularity = popularity;
+        await WriteAsync(path, JsonSerializer.Serialize(metadata), ct).ConfigureAwait(false);
+    }
+
     internal static async Task WriteAsync(string path, string json, CancellationToken ct)
     {
         var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";

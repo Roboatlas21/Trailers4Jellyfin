@@ -15,6 +15,9 @@ public sealed partial class TrailerSelectionTests
     private Video Clip(string name, int? tmdbId, params string[] genres) =>
         Trailer(name, JsonSerializer.Serialize(new { tmdbId, genres }));
 
+    private Video PopularClip(string name, double popularity, int? tmdbId, params string[] genres) =>
+        Trailer(name, JsonSerializer.Serialize(new { tmdbId, genres, popularity }));
+
     private Movie LibraryMovie(int id, bool watched, User? user = null)
     {
         var movie = new Movie { Id = Guid.NewGuid(), ProviderIds = new Dictionary<string, string> { ["Tmdb"] = id.ToString() } };
@@ -135,6 +138,59 @@ public sealed partial class TrailerSelectionTests
         Watched(match, 20);
         var result = _provider.SelectTrailers(new Movie { Genres = new[] { "Horror" } }, new[] { match, other }, _config, _user);
         Assert.Equal(new[] { other.Id, match.Id }, result.Select(t => t.Id));
+    }
+
+    [Fact]
+    public void Popularity_BreaksEqualUnwatchedGenreScores()
+    {
+        _config.PreferUnwatchedTrailers = true;
+        _config.NumberOfTrailers = 1;
+        var lower = PopularClip("lower", 20, 1, "Horror", "Comedy");
+        var higher = PopularClip("higher", 200, 2, "Horror", "Comedy");
+
+        var selected = _provider.SelectTrailers(
+            new Movie { Genres = new[] { "Horror", "Comedy" } },
+            new[] { lower, higher },
+            _config,
+            _user);
+
+        Assert.Equal(higher.Id, Assert.Single(selected).Id);
+    }
+
+    [Fact]
+    public void Popularity_DoesNotOverrideHigherGenreMatchScore()
+    {
+        _config.PreferUnwatchedTrailers = true;
+        _config.NumberOfTrailers = 1;
+        var strongerMatch = PopularClip("stronger", 10, 1, "Horror", "Comedy");
+        var morePopular = PopularClip("popular", 1000, 2, "Horror");
+
+        var selected = _provider.SelectTrailers(
+            new Movie { Genres = new[] { "Horror", "Comedy" } },
+            new[] { morePopular, strongerMatch },
+            _config,
+            _user);
+
+        Assert.Equal(strongerMatch.Id, Assert.Single(selected).Id);
+    }
+
+    [Fact]
+    public void Popularity_BreaksEqualWatchedReplayDates()
+    {
+        _config.PreferUnwatchedTrailers = true;
+        _config.NumberOfTrailers = 1;
+        var lower = PopularClip("lower-watched", 20, 1, "Horror");
+        var higher = PopularClip("higher-watched", 200, 2, "Horror");
+        Watched(lower, 10);
+        Watched(higher, 10);
+
+        var selected = _provider.SelectTrailers(
+            new Movie { Genres = new[] { "Horror" } },
+            new[] { lower, higher },
+            _config,
+            _user);
+
+        Assert.Equal(higher.Id, Assert.Single(selected).Id);
     }
 
     [Fact]
