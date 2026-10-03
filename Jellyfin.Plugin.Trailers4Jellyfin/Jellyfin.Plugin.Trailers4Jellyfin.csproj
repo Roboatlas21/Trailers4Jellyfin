@@ -3,8 +3,8 @@
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>Jellyfin.Plugin.Trailers4Jellyfin</RootNamespace>
-    <AssemblyVersion>2.0.18.4</AssemblyVersion>
-    <FileVersion>2.0.18.4</FileVersion>
+    <AssemblyVersion>2.0.18.5</AssemblyVersion>
+    <FileVersion>2.0.18.5</FileVersion>
     <Nullable>enable</Nullable>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
