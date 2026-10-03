@@ -66,8 +66,8 @@ public sealed class RankedTrailerPoolSelectorTests
             $"Movie {id}",
             "2026-01-01",
             new[] { 28 },
-            popularity: 100 - id,
-            voteCount: 1000,
-            voteAverage: 8,
+            Popularity: 100 - id,
+            VoteCount: 1000,
+            VoteAverage: 8,
             TmdbMovieSource.Popular);
 }
