@@ -211,10 +211,14 @@ Budget and runtime are read from TMDB movie details. Missing details are allowed
 Each scheduled run:
 
 1. Fetches and ranks the current TMDB candidate set.
-2. Applies the budget/runtime rules until the desired pool is filled.
-3. Keeps already-downloaded trailers whose TMDB IDs are still in that desired pool.
-4. Downloads up to the per-run limit of missing desired trailers.
-5. If the folder is over the configured pool size, retires old out-of-target, duplicate or unidentified legacy files first.
+2. Walks the ranking through budget/runtime checks and trailer availability.
+3. Keeps scanning below the nominal top 100 whenever a movie has no suitable TMDB/YouTube trailer, until the desired pool contains 100 trailer-capable movies or the candidate list is exhausted.
+4. Existing local trailers count as trailer-capable immediately; missing movies must currently expose a suitable trailer before they can reserve a pool slot.
+5. Keeps already-downloaded trailers whose TMDB IDs are still in that desired pool.
+6. Downloads up to the per-run limit of missing desired trailers.
+7. If the folder is over the configured pool size, retires old out-of-target, duplicate or unidentified legacy files first.
+
+A transient yt-dlp/download failure does not immediately blacklist a movie: if TMDB still advertises a suitable trailer, that movie remains in the desired set and is retried on a later run. Movies with no suitable TMDB trailer do not reserve slots.
 
 Sidecars contain the stable TMDB movie ID, so title changes do not break reconciliation. Legacy files without an ID are matched by their existing title/year filename when they are encountered as a desired candidate and have their sidecar upgraded; otherwise they age out gradually as ranked replacements arrive. This avoids deleting a full legacy pool before the 20-per-run replacement limit can refill it.
 
